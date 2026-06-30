@@ -1,0 +1,17 @@
+# deps
+node_modules/
+.venv/
+
+# local config / secrets
+.env
+
+# data + state
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# misc
+.DS_Store
+*.log
+scratch/

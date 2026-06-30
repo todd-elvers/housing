@@ -1,0 +1,13 @@
+{
+  "//": "MCP servers for FUTURE Tier-2 scraping of anti-bot portals (Zillow, Apartments.com) from within Claude Code. Not used by the headless ingest engine. See data-ingress-catalog.md Tier 2.",
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    },
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"]
+    }
+  }
+}

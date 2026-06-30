@@ -1,0 +1,19 @@
+{
+  "name": "housing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Automated San Francisco rental ingest + change monitoring (Tier 1 data sources)",
+  "scripts": {
+    "ingest": "tsx src/cli.ts ingest",
+    "sources": "tsx src/cli.ts sources",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "oxlint": "^0.15.6",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

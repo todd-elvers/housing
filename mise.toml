@@ -1,0 +1,42 @@
+# mise-en-place: tool versions + tasks for the housing ingest engine.
+# One-command setup:  mise run bootstrap
+# (its first step runs `mise install`, so a fresh clone needs nothing else.)
+
+[tools]
+node = "22"
+pnpm = "10"
+python = "3.12"
+uv = "latest"
+
+[env]
+# node:sqlite is "experimental" in node 22 — silence the per-run warning.
+NODE_OPTIONS = "--disable-warning=ExperimentalWarning"
+
+[tasks.bootstrap]
+description = "Install all tool versions + JS/Python deps (one-shot setup from a clean clone)"
+run = [
+  "mise install",
+  "test -f .env || cp .env.example .env",
+  "mise exec -- pnpm install",
+  "mise exec -- uv sync",
+]
+
+[tasks.ingest]
+description = "Fetch all enabled sources, diff against the DB, and notify on new/changed/removed"
+run = "pnpm exec tsx src/cli.ts ingest"
+
+[tasks.sources]
+description = "List every adapter and whether it is currently enabled (keys present)"
+run = "pnpm exec tsx src/cli.ts sources"
+
+[tasks.typecheck]
+description = "Type-check the TypeScript with no emit"
+run = "pnpm exec tsc --noEmit"
+
+[tasks.lint]
+description = "Lint src/ with oxlint"
+run = "pnpm exec oxlint src"
+
+[tasks.db]
+description = "Open the SQLite DB in the sqlite3 shell"
+run = "sqlite3 data/housing.db"
