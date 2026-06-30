@@ -87,8 +87,8 @@ mise run ingest
 ```
 
 - The **first** run for each source **seeds** the DB (no events — avoids a flood).
-- Every later run reports `new` / `changed` / `removed` and (if configured) POSTs
-  a webhook.
+- Every later run reports `new` / `changed` / `removed` and (if Pushover keys are
+  set) sends a push.
 
 Expected: `✓ craigslist: ~360 …`, `✓ redfin: ~500 …`, etc., then an `ingest
 summary` block. A SQLite DB appears at `data/housing.db`.
@@ -164,18 +164,21 @@ add a residential proxy (out of scope here).
 
 ---
 
-## 5. Notifications (generic)
+## 5. Notifications (Pushover)
 
-Every run records events in the `events` table and prints a digest. To push a
-structured summary somewhere on each run, set in `.env`:
+Every run prints a digest and records events in the `events` table. To get
+pushed when listings change, set your [Pushover](https://pushover.net) keys in
+`.env`:
 
 ```
-HOUSING_WEBHOOK_URL=https://your-endpoint.example/hook
+PUSHOVER_TOKEN=your_app_api_token   # create at https://pushover.net/apps/build
+PUSHOVER_USER=your_user_key         # from the Pushover dashboard
 ```
 
-The engine POSTs JSON `{ summary, counts, events }`. Wire any personal delivery
-(push, email, chat) behind that URL or by reading the `events` table directly —
-deliberately kept out of this repo.
+When both are set, any run that produces new/changed/removed listings sends a
+push (title = the counts, body = the top listings with links, tap = open the
+first one). Runs with no changes send nothing. Leave the keys unset and you just
+get the stdout digest.
 
 ---
 
@@ -230,7 +233,7 @@ src/
     http.ts          fetch w/ UA, timeout, retry, JSON-guard strip
     normalize.ts     content hash + address normalization
     db.ts            node:sqlite store + new/changed/removed diff
-    notify.ts        stdout digest + optional generic webhook
+    notify.ts        stdout digest + Pushover push (PUSHOVER_* env keys)
     run.ts           orchestrator
   adapters/
     index.ts         adapter registry

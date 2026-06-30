@@ -24,11 +24,11 @@ see [SETUP.md](./SETUP.md).
 ## How it works
 
 ```
-adapters (per source) → normalize → SQLite store → diff (new/changed/removed) → digest + optional webhook
+adapters (per source) → normalize → SQLite store → diff (new/changed/removed) → digest + Pushover push
 ```
 
 - **Tool/version management:** [`mise`](https://mise.jdx.dev) — one `mise run bootstrap` from a clean clone.
-- **Engine:** TypeScript (run via `tsx`), `node:sqlite` storage, generic notifier (records events + optional `HOUSING_WEBHOOK_URL`; no personal delivery baked in).
+- **Engine:** TypeScript (run via `tsx`), `node:sqlite` storage, Pushover notifier (set `PUSHOVER_TOKEN`/`PUSHOVER_USER` in `.env`); events also persist in the `events` table.
 - **Storage:** `data/housing.db` (gitignored). First run per source seeds silently; later runs emit events.
 
 ## Tier 1 sources (built)

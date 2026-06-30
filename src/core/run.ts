@@ -5,7 +5,6 @@ import type { SourceSyncSummary } from "./types.ts";
 
 export interface RunOpts {
   sources?: string[];
-  notify?: boolean;
 }
 
 export async function runIngest(opts: RunOpts = {}): Promise<SourceSyncSummary[]> {
@@ -44,7 +43,7 @@ export async function runIngest(opts: RunOpts = {}): Promise<SourceSyncSummary[]
       }
     }
 
-    if (opts.notify !== false) await notify(summaries);
+    await notify(summaries);
     return summaries;
   } finally {
     store.close();

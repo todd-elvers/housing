@@ -1,12 +1,12 @@
 import type { ListingEvent, SourceSyncSummary } from "./types.ts";
-import { httpFetch } from "./http.ts";
+
+const PUSHOVER_API = "https://api.pushover.net/1/messages.json";
+const MAX_MESSAGE = 1024; // Pushover message hard limit
 
 /**
- * Notification is intentionally generic. Every run's events are already recorded
- * in the `events` table; this just surfaces a summary:
- *   1. always prints a digest to stdout,
- *   2. if HOUSING_WEBHOOK_URL is set, POSTs the structured digest as JSON.
- * Wire any private/personal delivery (push, email, …) off the webhook or the DB.
+ * Pushover-first notifier. Always prints a digest to stdout; when a run produces
+ * events AND PUSHOVER_TOKEN + PUSHOVER_USER are set, sends a Pushover push.
+ * Keys are supplied by the user via env (.env) — nothing is hardcoded here.
  */
 export async function notify(summaries: SourceSyncSummary[]): Promise<void> {
   const events = summaries.flatMap((s) => s.events);
@@ -16,32 +16,70 @@ export async function notify(summaries: SourceSyncSummary[]): Promise<void> {
 
   printDigest(summaries, news, changed, removed);
 
-  const webhook = process.env.HOUSING_WEBHOOK_URL;
-  if (webhook && events.length > 0) {
-    try {
-      await httpFetch(webhook, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          summary: { new: news.length, changed: changed.length, removed: removed.length },
-          counts: summaries.map((s) => ({
-            source: s.source,
-            fetched: s.fetched,
-            new: s.newCount,
-            changed: s.changedCount,
-            removed: s.removedCount,
-            seeded: s.seeded,
-            error: s.error,
-          })),
-          events,
-        }),
-        retries: 1,
-      });
-      console.log(`\n→ webhook notified (${events.length} events)`);
-    } catch (err) {
-      console.error(`\n! webhook POST failed: ${(err as Error).message}`);
-    }
+  if (events.length === 0) return; // nothing changed → no push
+
+  const token = process.env.PUSHOVER_TOKEN;
+  const user = process.env.PUSHOVER_USER;
+  if (!token || !user) {
+    console.log("· pushover: set PUSHOVER_TOKEN + PUSHOVER_USER to get pushed (skipped)");
+    return;
   }
+
+  const form = new URLSearchParams({
+    token,
+    user,
+    title: `SF rentals: ${news.length} new · ${changed.length} changed · ${removed.length} removed`,
+    message: buildMessage(news, changed, removed),
+    html: "1",
+  });
+  const lead = news[0] ?? changed[0] ?? removed[0];
+  if (lead) {
+    form.set("url", lead.url);
+    form.set("url_title", "Open listing");
+  }
+
+  try {
+    const res = await fetch(PUSHOVER_API, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
+    });
+    if (res.ok) {
+      console.log(`→ pushover sent (${events.length} events)`);
+    } else {
+      console.error(`! pushover HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    }
+  } catch (err) {
+    console.error(`! pushover failed: ${(err as Error).message}`);
+  }
+}
+
+function buildMessage(
+  news: ListingEvent[],
+  changed: ListingEvent[],
+  removed: ListingEvent[],
+): string {
+  const lines: string[] = [];
+  const add = (label: string, evs: ListingEvent[]) => {
+    for (const e of evs.slice(0, 6)) {
+      const title = esc((e.title ?? "(untitled)").slice(0, 60));
+      lines.push(`<b>${label}</b> ${title} — ${esc(e.detail)}\n<a href="${escAttr(e.url)}">link</a>`);
+    }
+  };
+  add("NEW", news);
+  add("CHG", changed);
+  add("RM", removed);
+  const total = news.length + changed.length + removed.length;
+  let msg = lines.slice(0, 10).join("\n\n");
+  if (total > 10) msg += `\n\n…and ${total - 10} more`;
+  return msg.slice(0, MAX_MESSAGE);
+}
+
+function esc(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function escAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
 
 function printDigest(
