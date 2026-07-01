@@ -13,6 +13,7 @@ const REFERER = `${BASE}/apartments-for-rent/san-francisco-ca`;
 
 interface Listable {
   listing_id: number;
+  group_id?: number;
   url?: string;
   title?: string;
   building_name?: string;
@@ -28,11 +29,24 @@ interface Listable {
   min_bedrooms?: number;
   max_bedrooms?: number;
   min_bathrooms?: number;
+  max_bathrooms?: number;
   property_type?: string;
   listing_status?: number;
   listed_on?: number;
   created_on?: number;
   modified_on?: number;
+  amenities?: unknown;
+  amenity_tags?: unknown;
+  building_amenities?: unknown;
+  building_amenity_tags?: unknown;
+}
+
+/** Flatten Zumper's various amenity fields into one lowercased, searchable blob. */
+function amenityText(l: Listable): string {
+  return [l.amenities, l.amenity_tags, l.building_amenities, l.building_amenity_tags]
+    .map((x) => (x == null ? "" : JSON.stringify(x)))
+    .join(" ")
+    .toLowerCase();
 }
 
 export default defineSource({
@@ -55,6 +69,9 @@ export default defineSource({
       .join("; ");
     const bundle = JSON.parse(stripJsonGuard(await bundleRes.text())) as { csrf: string };
 
+    // NOTE: the city listables view is hard-capped at ~100 buildings server-side
+    // (excludeGroupIds paging + neighborhood slugs both return the same set). For
+    // fuller coverage, add a map-bbox-tiling or Apify source — see the catalog.
     const res = await httpFetch(`${BASE}/api/t/1/pages/listables`, {
       method: "POST",
       headers: {
@@ -88,6 +105,16 @@ function map(l: Listable): RawListing {
     propertyType: l.property_type ?? null,
     postedAt: l.listed_on ? l.listed_on * 1000 : null,
     changeTag: `${l.min_price ?? ""}|${l.listing_status ?? ""}|${l.modified_on ?? ""}`,
-    raw: { group: l.building_name, status: l.listing_status, maxPrice: l.max_price },
+    raw: {
+      buildingName: l.building_name ?? null,
+      status: l.listing_status ?? null,
+      minBeds: l.min_bedrooms ?? null,
+      maxBeds: l.max_bedrooms ?? null,
+      minBaths: l.min_bathrooms ?? null,
+      maxBaths: l.max_bathrooms ?? null,
+      minPrice: l.min_price ?? null,
+      maxPrice: l.max_price ?? null,
+      amenities: amenityText(l),
+    },
   };
 }

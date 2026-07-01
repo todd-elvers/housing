@@ -71,6 +71,15 @@ function decodeItem(it: unknown[], decode: SapiResponse["data"]["decode"]): RawL
     }
   }
 
+  // Craigslist has no structured bath field, but titles almost always encode it
+  // ("3BR / 3BA", "3 bd 2 ba", "2 bath"). Parse it so bath filtering works.
+  const bathMatch = title.match(/(\d+(?:\.\d)?)\s*(?:ba\b|bath)/i);
+  const baths = bathMatch ? Number(bathMatch[1]) : null;
+  if (beds == null) {
+    const bedMatch = title.match(/(\d+)\s*(?:br\b|bd\b|bed)/i);
+    if (bedMatch) beds = Number(bedMatch[1]);
+  }
+
   const loc = locIdx != null ? decode.locations[locIdx] : undefined;
   const area = loc?.[1] ?? "sfbay";
   const sub = loc?.[2] ?? null;
@@ -84,6 +93,7 @@ function decodeItem(it: unknown[], decode: SapiResponse["data"]["decode"]): RawL
     title,
     price,
     beds,
+    baths,
     sqft,
     lat,
     lon,
