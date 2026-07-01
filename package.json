@@ -6,6 +6,7 @@
   "description": "Automated San Francisco rental ingest + change monitoring, exposed as a discoverable CLI",
   "scripts": {
     "housing": "tsx src/main.ts",
+    "test": "tsx --test test/tools.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src"
   },

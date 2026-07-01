@@ -29,6 +29,10 @@ run = [
 description = "Run the housing CLI. Forward args after `--`:  mise run housing -- ingest --source craigslist"
 run = "aube exec tsx src/main.ts"
 
+[tasks.test]
+description = "Self-discovering integration test: exercises every command + source (HOUSING_TEST_LIVE=0 to skip network)"
+run = "aube exec tsx --test test/tools.test.ts"
+
 [tasks.typecheck]
 description = "Type-check the whole graph (no emit)"
 run = "aube exec tsc --noEmit"

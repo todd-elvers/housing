@@ -38,6 +38,8 @@ Rental sources (under `housing search`): `craigslist`, `redfin`, `dahlia`, `zump
 
 Adding a search/tool is **write one file, drop it in `src/commands/`, done** — no central registry, no `switch`, no wiring. A file that default-exports `defineSource()` (a rental source) or `defineTool()` (any other verb) is automatically a registered, nested, help-documented, introspectable, env-validated command. Folders become command groups. Full recipe in [SETUP.md](./SETUP.md).
 
+The integration test is self-maintaining too: `mise run test` discovers and exercises every command + source the same way the CLI does, so a new tool is covered with no test changes (`HOUSING_TEST_LIVE=0` for offline/CI).
+
 ## Architecture
 
 ```

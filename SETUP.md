@@ -144,7 +144,26 @@ Worked example (a real source): [`src/commands/search/rentcast.ts`](./src/comman
 
 ---
 
-## 7. Scheduling
+## 7. Testing
+
+```sh
+mise run test                     # exercises every command + source
+HOUSING_TEST_LIVE=0 mise run test # skip network (contract + wiring only; ~1s, CI-safe)
+```
+
+`test/tools.test.ts` is **self-maintaining** — it discovers commands + sources the
+same way the CLI does (`loadCommands` / `loadSources` / `introspect`), so a new tool
+is picked up and exercised with **no test changes**. It checks, generically:
+every tool is well-formed (summary/when/kind, valid args + env) and in the manifest;
+`--help`, `introspect --json`, and `sources` run; a disabled source fails fast with a
+structured `env_missing` error; a full `ingest` runs against a throwaway DB; and each
+enabled source actually fetches and returns valid listings (`sourceId` + http `url`).
+Live fetches are on by default (real proof); `HOUSING_TEST_LIVE=0` runs only the
+offline tiers.
+
+---
+
+## 8. Scheduling
 
 The engine is one process; schedule `./housing ingest` however you like. Cadence
 (see `data-ingress-catalog.md`): Craigslist every 2–5 min **from a residential IP**
@@ -158,7 +177,7 @@ crontab -e
 
 ---
 
-## 8. Project layout
+## 9. Project layout
 
 ```
 mise.toml / mise.lock   pinned tool versions (node/aube/python/uv) + tasks
@@ -177,12 +196,13 @@ src/
   env/dotenv.ts spec.ts .env loader; per-command typed env validation
   core/                 engine: db, http, normalize, notify, log, run, types
   commands/             >>> add files here <<<  ingest.ts sources.ts introspect.ts + search/*.ts
+test/tools.test.ts      self-discovering integration test (exercises every command + source)
 scripts/homeharvest_fetch.py   Python bridge (uv)
 ```
 
 ---
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 - **Craigslist returns 0 / 403** → you're on a datacenter IP; run from a residential connection.
 - **A source says "disabled — set X"** → add `X` to `.env` (`.env.example` says where to get it).
