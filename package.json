@@ -4,14 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Automated San Francisco rental ingest + change monitoring, exposed as a discoverable CLI",
-  "scripts": {
-    "housing": "tsx src/main.ts",
-    "test": "tsx --test test/tools.test.ts",
-    "format": "oxfmt src test",
-    "lint": "oxlint src",
-    "typecheck": "tsgo --noEmit",
-    "check": "oxfmt src test && oxlint src && tsgo --noEmit"
-  },
+  "//": "Tasks live in mise.toml (mise run format|lint|typecheck|check|test|housing). package.json holds deps only.",
   "dependencies": {
     "citty": "^0.1.6",
     "zod": "^4.0.0"

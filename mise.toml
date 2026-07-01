@@ -31,23 +31,23 @@ run = "aube exec tsx src/main.ts"
 
 [tasks.test]
 description = "Self-discovering integration test: exercises every command + source (HOUSING_TEST_LIVE=0 to skip network)"
-run = "aube run test"
+run = "aube exec tsx --test test/tools.test.ts"
 
 [tasks.format]
 description = "Format src/ + test/ with oxfmt"
-run = "aube run format"
+run = "aube exec oxfmt src test"
 
 [tasks.lint]
 description = "Lint src/ with oxlint"
-run = "aube run lint"
+run = "aube exec oxlint src"
 
 [tasks.typecheck]
 description = "Type-check the whole graph with tsgo (fast native TS compiler)"
-run = "aube run typecheck"
+run = "aube exec tsgo --noEmit"
 
 [tasks.check]
-description = "Format, lint, and typecheck"
-run = "aube run check"
+description = "Format, then lint + typecheck"
+run = ["mise run format", "mise run lint", "mise run typecheck"]
 
 [tasks.db]
 description = "Open the SQLite DB in the sqlite3 shell"
