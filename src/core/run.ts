@@ -1,37 +1,38 @@
 import { Store } from "./db.ts";
 import { notify } from "./notify.ts";
-import { getAdapters } from "../adapters/index.ts";
+import { log } from "./log.ts";
+import type { SourceContract } from "../source.ts";
 import type { SourceSyncSummary } from "./types.ts";
 
-export interface RunOpts {
-  sources?: string[];
-}
-
-export async function runIngest(opts: RunOpts = {}): Promise<SourceSyncSummary[]> {
-  const adapters = getAdapters(opts.sources);
-  const store = new Store();
+/**
+ * Fetch each source, reconcile against the DB, and notify. Iterates the passed
+ * list (from loadSources()); a disabled source is skipped, and one source's
+ * failure never kills the batch.
+ */
+export async function ingestSources(
+  sources: SourceContract[],
+  dbPath?: string,
+): Promise<SourceSyncSummary[]> {
+  const store = new Store(dbPath);
   const summaries: SourceSyncSummary[] = [];
-
   try {
-    for (const adapter of adapters) {
-      const state = adapter.enabled();
+    for (const source of sources) {
+      const state = source.enabled();
       if (!state.ok) {
-        console.log(`· ${adapter.name}: skipped (${state.reason ?? "disabled"})`);
+        log.info(`· ${source.name}: skipped (${state.reason})`);
         continue;
       }
       const started = Date.now();
       try {
-        const listings = await adapter.fetch();
-        const summary = store.syncSource(adapter.name, listings, adapter.snapshotComplete);
+        const listings = await source.fetch();
+        const summary = store.syncSource(source.name, listings, source.snapshotComplete);
         summaries.push(summary);
-        console.log(
-          `✓ ${adapter.name}: ${listings.length} listings in ${Date.now() - started}ms`,
-        );
+        log.info(`✓ ${source.name}: ${listings.length} listings in ${Date.now() - started}ms`);
       } catch (err) {
         const message = (err as Error).message;
-        console.error(`✗ ${adapter.name}: ${message}`);
+        log.error(`✗ ${source.name}: ${message}`);
         summaries.push({
-          source: adapter.name,
+          source: source.name,
           fetched: 0,
           seeded: 0,
           newCount: 0,
@@ -42,7 +43,6 @@ export async function runIngest(opts: RunOpts = {}): Promise<SourceSyncSummary[]
         });
       }
     }
-
     await notify(summaries);
     return summaries;
   } finally {

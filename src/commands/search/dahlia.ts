@@ -1,5 +1,6 @@
-import { fetchJson } from "../core/http.ts";
-import type { Adapter, RawListing } from "../core/types.ts";
+import { defineSource } from "../../source.ts";
+import { fetchJson } from "../../core/http.ts";
+import type { RawListing } from "../../core/types.ts";
 
 // DAHLIA — SF's official affordable/BMR housing portal. Free, no auth, no
 // anti-bot. These are income-capped lottery units (mostly application-gated),
@@ -22,17 +23,16 @@ interface DahliaListing {
   unitSummaries?: { general?: { minMonthlyRent?: number; unitType?: string }[] };
 }
 
-export const dahlia: Adapter = {
+export default defineSource({
   name: "dahlia",
+  summary: "SF DAHLIA affordable/BMR housing portal — the authoritative feed for income-capped lottery rentals.",
+  when: "Use for SF affordable/below-market-rate units; mostly application-gated lottery listings, so skip it for a market-rate hunt.",
   snapshotComplete: true,
-  enabled() {
-    return { ok: true };
-  },
   async fetch(): Promise<RawListing[]> {
     const data = await fetchJson<DahliaResponse>(URL);
     return (data.listings ?? []).map(map);
   },
-};
+});
 
 function map(l: DahliaListing): RawListing {
   const rents = (l.unitSummaries?.general ?? [])

@@ -1,5 +1,6 @@
-import { httpFetch } from "../core/http.ts";
-import type { Adapter, RawListing } from "../core/types.ts";
+import { defineSource } from "../../source.ts";
+import { httpFetch } from "../../core/http.ts";
+import type { RawListing } from "../../core/types.ts";
 
 // RentSFNow / Veritas Investments — the largest single private SF/Oakland
 // portfolio. No API, but the property sitemaps expose every unit URL + lastmod.
@@ -11,12 +12,11 @@ const SITEMAPS = (n: number) =>
     ? "https://www.rentsfnow.com/property-sitemap.xml"
     : `https://www.rentsfnow.com/property-sitemap${n}.xml`;
 
-export const rentsfnow: Adapter = {
+export default defineSource({
   name: "rentsfnow",
+  summary: "RentSFNow / Veritas sitemap crawl — the largest single private SF/Oakland portfolio's full unit set + relist/delist changes.",
+  when: "Use for complete coverage of a big private-landlord portfolio (absence ⇒ removed); no price/availability, just the unit URL set + lastmod change tags.",
   snapshotComplete: true,
-  enabled() {
-    return { ok: true };
-  },
   async fetch(): Promise<RawListing[]> {
     const out: RawListing[] = [];
     const seen = new Set<string>();
@@ -53,4 +53,4 @@ export const rentsfnow: Adapter = {
     }
     return out;
   },
-};
+});

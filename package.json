@@ -3,12 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Automated San Francisco rental ingest + change monitoring (Tier 1 data sources)",
+  "description": "Automated San Francisco rental ingest + change monitoring, exposed as a discoverable CLI",
   "scripts": {
-    "ingest": "tsx src/cli.ts ingest",
-    "sources": "tsx src/cli.ts sources",
+    "housing": "tsx src/main.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src"
+  },
+  "dependencies": {
+    "citty": "^0.1.6",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

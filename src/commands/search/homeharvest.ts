@@ -1,5 +1,8 @@
 import { spawnSync } from "node:child_process";
-import type { Adapter, RawListing } from "../core/types.ts";
+import { z } from "zod";
+import { defineSource } from "../../source.ts";
+import { envSpec } from "../../env/spec.ts";
+import type { RawListing } from "../../core/types.ts";
 
 // HomeHarvest (Realtor.com) has no usable JS path, so we shell out to a Python
 // bridge via uv. Disabled by default — set HOUSING_HOMEHARVEST=1 after `uv sync`.
@@ -18,17 +21,17 @@ interface HhRow {
   list_date?: string;
 }
 
-export const homeharvest: Adapter = {
+export default defineSource({
   name: "homeharvest",
+  summary: "Realtor.com rentals via the HomeHarvest Python scraper, shelled out through a `uv run` bridge.",
+  when: "Use for Realtor.com/MLS inventory not covered by the JS sources; requires local `uv sync` and HOUSING_HOMEHARVEST=1.",
   snapshotComplete: false,
-  enabled() {
-    return process.env.HOUSING_HOMEHARVEST === "1"
-      ? { ok: true }
-      : { ok: false, reason: "set HOUSING_HOMEHARVEST=1 (after `uv sync`)" };
+  requires: {
+    HOUSING_HOMEHARVEST: envSpec(z.literal("1"), "Set to 1 to enable (needs `uv sync` first)", "run: uv sync"),
+    HOMEHARVEST_LOCATION: envSpec(z.string().default("San Francisco, CA"), "Location to scrape", ""),
+    HOMEHARVEST_PAST_DAYS: envSpec(z.coerce.number().default(3), "Only listings from the last N days", ""),
   },
-  async fetch(): Promise<RawListing[]> {
-    const location = process.env.HOMEHARVEST_LOCATION || "San Francisco, CA";
-    const pastDays = process.env.HOMEHARVEST_PAST_DAYS || "3";
+  async fetch(env): Promise<RawListing[]> {
     const res = spawnSync(
       "uv",
       [
@@ -36,9 +39,9 @@ export const homeharvest: Adapter = {
         "python",
         "scripts/homeharvest_fetch.py",
         "--location",
-        location,
+        env.HOMEHARVEST_LOCATION,
         "--past-days",
-        pastDays,
+        String(env.HOMEHARVEST_PAST_DAYS),
       ],
       { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
     );
@@ -48,7 +51,7 @@ export const homeharvest: Adapter = {
     const rows = JSON.parse(res.stdout) as HhRow[];
     return rows.map(map);
   },
-};
+});
 
 function map(r: HhRow): RawListing {
   return {

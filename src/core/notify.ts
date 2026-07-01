@@ -1,4 +1,5 @@
 import type { ListingEvent, SourceSyncSummary } from "./types.ts";
+import { log } from "./log.ts";
 
 const PUSHOVER_API = "https://api.pushover.net/1/messages.json";
 const MAX_MESSAGE = 1024; // Pushover message hard limit
@@ -21,7 +22,7 @@ export async function notify(summaries: SourceSyncSummary[]): Promise<void> {
   const token = process.env.PUSHOVER_TOKEN;
   const user = process.env.PUSHOVER_USER;
   if (!token || !user) {
-    console.log("· pushover: set PUSHOVER_TOKEN + PUSHOVER_USER to get pushed (skipped)");
+    log.print("· pushover: set PUSHOVER_TOKEN + PUSHOVER_USER to get pushed (skipped)");
     return;
   }
 
@@ -45,12 +46,12 @@ export async function notify(summaries: SourceSyncSummary[]): Promise<void> {
       body: form.toString(),
     });
     if (res.ok) {
-      console.log(`→ pushover sent (${events.length} events)`);
+      log.print(`→ pushover sent (${events.length} events)`);
     } else {
-      console.error(`! pushover HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      log.error(`! pushover HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
     }
   } catch (err) {
-    console.error(`! pushover failed: ${(err as Error).message}`);
+    log.error(`! pushover failed: ${(err as Error).message}`);
   }
 }
 
@@ -88,29 +89,29 @@ function printDigest(
   changed: ListingEvent[],
   removed: ListingEvent[],
 ): void {
-  console.log("\n──────── ingest summary ────────");
+  log.print("\n──────── ingest summary ────────");
   for (const s of summaries) {
     const tag = s.error ? `ERROR ${s.error}` : s.seeded > 0 ? `seeded ${s.seeded}` : "";
-    console.log(
+    log.print(
       `  ${s.source.padEnd(12)} fetched ${String(s.fetched).padStart(4)}  ` +
         `new ${s.newCount}  changed ${s.changedCount}  removed ${s.removedCount}  ${tag}`,
     );
   }
-  console.log(
+  log.print(
     `  ─ total: ${news.length} new · ${changed.length} changed · ${removed.length} removed`,
   );
 
   const show = (label: string, evs: ListingEvent[]) => {
     if (!evs.length) return;
-    console.log(`\n  ${label}:`);
+    log.print(`\n  ${label}:`);
     for (const e of evs.slice(0, 15)) {
       const title = (e.title ?? "(untitled)").slice(0, 64);
-      console.log(`   • [${e.source}] ${title} — ${e.detail}\n     ${e.url}`);
+      log.print(`   • [${e.source}] ${title} — ${e.detail}\n     ${e.url}`);
     }
-    if (evs.length > 15) console.log(`   … and ${evs.length - 15} more`);
+    if (evs.length > 15) log.print(`   … and ${evs.length - 15} more`);
   };
   show("NEW", news);
   show("CHANGED", changed);
   show("REMOVED", removed);
-  console.log("");
+  log.print("");
 }

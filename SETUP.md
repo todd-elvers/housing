@@ -1,279 +1,192 @@
-# SETUP — housing ingest engine
+# SETUP — housing CLI
 
-This guide is written so an LLM agent (or a human) can stand the project up
-deterministically. Run the steps in order; each lists its expected result.
-
-The repo ingests San Francisco rental listings from the **Tier 1** data sources
-in [`data-ingress-catalog.md`](./data-ingress-catalog.md), stores them in SQLite,
-and emits `new` / `changed` / `removed` events on every run.
-
----
-
-## 0. What you get
-
-| Source | Adapter | Needs config? | Notes |
-|---|---|---|---|
-| Craigslist (`sapi` JSON) | `craigslist` | no | **Run from a residential IP** (home box). Datacenter IPs get 403. |
-| Redfin (`/stingray` rentals) | `redfin` | no | Identity + address (price needs future detail-fetch enrichment). US IP. |
-| DAHLIA (SF affordable/BMR) | `dahlia` | no | Income-capped lottery units. |
-| Zumper (`/listables`) | `zumper` | no | Rich change fields (price/status/modified). |
-| RentSFNow / Veritas | `rentsfnow` | no | Sitemap diff over ~4k units. |
-| RentCast | `rentcast` | `RENTCAST_API_KEY` | The legal aggregator spine. |
-| Reddit (housing subs) | `reddit` | `REDDIT_CLIENT_ID/SECRET` | NEW-lead intel, not structured listings. |
-| HomeHarvest (Realtor.com) | `homeharvest` | `HOUSING_HOMEHARVEST=1` + `uv sync` | Python bridge. |
-
-The five no-config sources work immediately after bootstrap. The rest unlock by
-adding keys to `.env`.
+Step-by-step, runnable setup. Written so an LLM agent (or a human) can stand this
+up and extend it deterministically. The CLI ingests San Francisco rental listings
+from many sources, diffs for new/changed/removed, and notifies.
 
 ---
 
 ## 1. Prerequisites — install `mise`
 
-All tool versions (node, pnpm, python, uv) are pinned in `mise.toml` and managed
-by [mise](https://mise.jdx.dev). You only need `mise` itself on the host.
+All tool versions (node, aube, python, uv) are pinned in `mise.toml` and locked in
+`mise.lock`. The only thing you install on the host is [mise](https://mise.jdx.dev):
 
 ```sh
-# macOS
-brew install mise
-# or, any platform
+brew install mise          # macOS
+# or, any platform:
 curl https://mise.run | sh
 ```
 
-Verify:
-
-```sh
-mise --version        # expect 2025.x or newer
-```
-
-> If `mise` commands don't pick up the tools, ensure the shell is activated:
-> add `eval "$(mise activate zsh)"` (or bash) to your shell rc, or prefix
-> commands with `mise exec --`.
+If tools don't appear on PATH, either activate mise (`eval "$(mise activate zsh)"`
+in your shell rc) or prefix commands with `mise exec --`. `./housing` handles this
+for you.
 
 ---
 
 ## 2. Bootstrap (one command)
 
-From the repo root:
-
 ```sh
 mise run bootstrap
 ```
 
-This runs, in order:
-
-1. `mise install` — downloads node 22, pnpm 10, python 3.12, uv.
-2. `cp .env.example .env` (only if `.env` doesn't exist yet).
-3. `pnpm install` — JS deps (tsx, typescript, oxlint).
-4. `uv sync` — Python deps for the HomeHarvest bridge (pandas, homeharvest).
-
-Expected tail: `uv sync` resolving packages with no error. Total ~1–3 min on a
-cold cache.
+Runs, in order:
+1. `mise install` — node 22, **aube** (the package manager), python 3.12, uv — at the exact versions in `mise.lock`.
+2. `cp .env.example .env` (only if `.env` is absent).
+3. `aube install` — JS deps (citty, zod, tsx, …). Only installs versions **≥ 7 days old** (`.npmrc` `minimumReleaseAge`) as a supply-chain cooldown.
+4. `uv sync` — Python deps for the HomeHarvest bridge.
 
 Sanity check:
 
 ```sh
-mise run sources
+./housing --help      # command tree
+./housing sources     # 5 sources enabled, 3 need keys
 ```
-
-Expected: the 5 no-config adapters show `●` (enabled); `rentcast` / `reddit` /
-`homeharvest` show `○` (disabled, awaiting config).
 
 ---
 
-## 3. First run
+## 3. Run
 
 ```sh
-mise run ingest
+./housing ingest                      # fetch all enabled sources, diff, notify
+./housing ingest --source craigslist  # just one (or --source a,b)
+./housing search redfin --json        # run one source, print its listings as JSON
+./housing sources                     # enabled/disabled + why
 ```
 
-- The **first** run for each source **seeds** the DB (no events — avoids a flood).
-- Every later run reports `new` / `changed` / `removed` and (if Pushover keys are
-  set) sends a push.
+`./housing <args>` == `mise run housing -- <args>`. The DB lands at `data/housing.db`.
+The first run per source **seeds** silently (no events); later runs report
+new/changed/removed. Every run writes a timestamped `./housing.log` (truncated each
+run); `--verbose` adds debug detail to stdout.
 
-Expected: `✓ craigslist: ~360 …`, `✓ redfin: ~500 …`, etc., then an `ingest
-summary` block. A SQLite DB appears at `data/housing.db`.
+---
 
-Inspect it:
+## 4. Discover what exists (for LLMs)
+
+The CLI is self-describing — you never need to read source to know what's available:
 
 ```sh
-mise run db        # opens sqlite3 on data/housing.db
-# e.g.
-sqlite3 -box data/housing.db "SELECT source, count(*), count(price) FROM listings GROUP BY source;"
-sqlite3 -box data/housing.db "SELECT source, type, detail, url FROM events ORDER BY id DESC LIMIT 20;"
+./housing introspect --json           # the whole tool tree as one manifest
+./housing introspect --json --path search   # scope to a subtree
+./housing search rentcast --help      # a single command's args, examples, required env
 ```
 
-Run a single source:
-
-```sh
-mise run ingest --source craigslist
-mise run ingest --source redfin,zumper
-```
+`introspect --json` gives each tool's `summary` (what), `when` (when to use it),
+`kind` (query/mutation), args (+ JSON Schema), examples, and required env — the
+manifest an agent reads to pick the right tool. `AGENTS.md` is a human-readable
+render of the same, regenerated with `./housing introspect --format agents`.
 
 ---
 
-## 4. Enable the key-gated sources (optional)
+## 5. Enable the key-gated sources (optional)
 
-Edit `.env` (created by bootstrap). Each block below is independent.
+Edit `.env` (created by bootstrap; it's gitignored). Each block is independent;
+`./housing sources` tells you exactly which var is missing and where to get it.
 
-### 4a. RentCast — the legal aggregator spine
+- **rentcast** — `RENTCAST_API_KEY` from <https://app.rentcast.io> (free tier 50 req/mo).
+- **reddit** — `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` from a "script" app at <https://www.reddit.com/prefs/apps>.
+- **homeharvest** — set `HOUSING_HOMEHARVEST=1` (Python bridge; `uv sync` ran during bootstrap).
 
-1. Sign up at <https://app.rentcast.io> (self-serve, no business vetting).
-2. Copy the API key from the dashboard.
-3. In `.env`:
-   ```
-   RENTCAST_API_KEY=your_key_here
-   RENTCAST_CITY=San Francisco
-   ```
-4. Verify: `mise run ingest --source rentcast` returns listings.
+`.env.example` lists every variable with a description and where to obtain it. It's
+generated — regenerate after adding a tool with `./housing introspect --format env-example > .env.example`.
 
-Cost: free tier = 50 req/mo (one paginated `ingest` = 1 request). Real daily
-monitoring wants the **Foundation** plan (~$74/mo = 1,000 req). Use `daysOld`
-deltas later to conserve quota.
+### Notifications (Pushover)
 
-### 4b. Reddit — housing-sub NEW leads
-
-1. Go to <https://www.reddit.com/prefs/apps> → **create another app…** → type
-   **script**. Redirect URI can be `http://localhost`.
-2. Copy the client id (under the app name) and the secret.
-3. In `.env`:
-   ```
-   REDDIT_CLIENT_ID=...
-   REDDIT_CLIENT_SECRET=...
-   REDDIT_USERNAME=your_reddit_username
-   REDDIT_SUBS=sanfrancisco,bayarea,AskSF
-   ```
-4. Verify: `mise run ingest --source reddit`.
-
-Notes: only `sanfrancisco`, `bayarea`, `AskSF` are confirmed to exist — verify any
-others before adding. Posts are immutable (new-only feed). Honor Reddit's rate
-limits (the adapter is well under them).
-
-### 4c. HomeHarvest — Realtor.com (Python bridge)
-
-Already installed by `uv sync` during bootstrap. Just enable it:
-
-```
-HOUSING_HOMEHARVEST=1
-HOMEHARVEST_LOCATION=San Francisco, CA
-HOMEHARVEST_PAST_DAYS=3
-```
-
-Verify: `mise run ingest --source homeharvest` (expect ~20–30 recent rentals).
-If you hit intermittent `403`s, that's Realtor.com throttling — rerun later or
-add a residential proxy (out of scope here).
+Set `PUSHOVER_TOKEN` (app token from <https://pushover.net/apps/build>) and
+`PUSHOVER_USER`. When both are set, any `ingest` that produces changes sends a push.
+Unset → stdout digest + `housing.log` only.
 
 ---
 
-## 5. Notifications (Pushover)
+## 6. Add a tool (the whole point)
 
-Every run prints a digest and records events in the `events` table. To get
-pushed when listings change, set your [Pushover](https://pushover.net) keys in
-`.env`:
+**Adding a tool = write one file, drop it in `src/commands/`, done.** No central
+registry, no `switch`, no task, no `.env.example` edit. If you're editing a shared
+file to make a command appear, you're doing it wrong — the file drop IS the
+registration. Folders under `src/commands/` become command groups (arbitrary depth).
 
-```
-PUSHOVER_TOKEN=your_app_api_token   # create at https://pushover.net/apps/build
-PUSHOVER_USER=your_user_key         # from the Pushover dashboard
-```
+1. **Which primitive?** Does it FETCH rental listings for the diff/notify engine?
+   - **Yes** → `defineSource` in `src/commands/search/<name>.ts` (`<name>` == filename).
+   - **No** (a query/report/utility) → `defineTool` in `src/commands/<group>/<name>.ts`.
 
-When both are set, any run that produces new/changed/removed listings sends a
-push (title = the counts, body = the top listings with links, tap = open the
-first one). Runs with no changes send nothing. Leave the keys unset and you just
-get the stdout digest.
+2. **Copy the nearest sibling** as a template: `src/commands/search/rentcast.ts` (has
+   required env) or `src/commands/search/craigslist.ts` (no env); for a non-source
+   verb, `src/commands/introspect.ts`.
+
+3. **Fill it in:**
+   - `summary` (one line: WHAT) and `when` (one line: WHEN an agent should pick it — this drives correct tool selection).
+   - Sources: `snapshotComplete` (true if a full fetch is the complete set, so absence ⇒ removed). Verbs: `kind: "query" | "mutation"`.
+   - **Secrets inline** — the only place a secret is registered:
+     ```ts
+     requires: { API_KEY: envSpec(z.string().min(1), "what it is", "https://where-to-get-it") }
+     ```
+     This one line gives you: fail-fast validation before any work, the ingest
+     enable/skip gate, the `--help` "Required env" line, the `introspect` entry, and
+     the `.env.example` row. Never read `process.env` directly; never hand-write an enable check.
+   - **Args are a flat zod object** (`input`): add a field → get a `--flag`, validation,
+     coercion, a help line, and an introspect entry. Use `.describe()` for help,
+     `z.coerce.number()` / `z.enum([...])` for typed/choice args, `.optional()` /
+     `.default()` for optionality. Keep inputs flat (scalars/enums/string arrays); for
+     structured input, take a JSON string arg and `z.parse()` it.
+   - **Body:** `fetch(env)` returning `RawListing[]` (source) or `run({ input, env, log })`
+     returning any value (verb — auto-serialized under `--json`; `throw` for errors).
+
+4. **Verify:**
+   ```sh
+   mise run typecheck
+   ./housing search <name> --help        # generated help
+   ./housing introspect --json           # appears in the manifest (also resolves every command = smoke test)
+   ./housing sources                     # a source shows up + enabled/skip
+   ./housing introspect --format env-example > .env.example   # if you added env
+   ./housing introspect --format agents  > AGENTS.md
+   ```
+
+Worked example (a real source): [`src/commands/search/rentcast.ts`](./src/commands/search/rentcast.ts).
 
 ---
 
-## 6. Scheduling
+## 7. Scheduling
 
-Cadence guidance from the catalog:
-
-- **Craigslist**: every 2–5 min, **from a residential IP**, ≤3–5 concurrent.
-- **Redfin / DAHLIA / RentSFNow / Zumper**: hourly–daily (trivial volume).
-- **RentCast**: daily (mind the monthly quota).
-
-The engine is one process; schedule `mise run ingest` (or per-source) however you
-like.
-
-**macOS (launchd / cron)** — simplest is cron:
+The engine is one process; schedule `./housing ingest` however you like. Cadence
+(see `data-ingress-catalog.md`): Craigslist every 2–5 min **from a residential IP**
+(datacenter IPs are 403'd — run it on a home box); Redfin/DAHLIA/RentSFNow/Zumper
+hourly–daily; RentCast daily (mind the monthly quota).
 
 ```sh
 crontab -e
-# every 15 min, log to a file
-*/15 * * * * cd /Users/telvers/Projects/housing && /opt/homebrew/bin/mise run ingest >> data/ingest.log 2>&1
+*/15 * * * * cd /path/to/housing && ./housing ingest >> /dev/null 2>&1   # housing.log has the detail
 ```
-
-**Synology (home box — the recommended host for Craigslist's residential IP):**
-- DSM **Task Scheduler** → user-defined script → `cd /volume1/.../housing && mise run ingest`, OR
-- Containerize and run under Container Manager on a schedule. (No Dockerfile yet —
-  a future step; until then the host-cron / Task Scheduler path works.)
-
----
-
-## 7. MCP servers (future Tier-2 scraping)
-
-`.mcp.json` registers **Playwright** and **Fetch** MCP servers for scraping the
-anti-bot portals (Zillow, Apartments.com) from within Claude Code. They are NOT
-used by the headless ingest engine. When you open this repo in Claude Code,
-approve the servers; `npx`/`uvx` fetch them on first use. See Tier 2 in the
-catalog for when to reach for them.
 
 ---
 
 ## 8. Project layout
 
 ```
-mise.toml            tool versions + tasks (bootstrap, ingest, sources, db, …)
-package.json         JS deps + scripts (tsx runner)
-pyproject.toml       Python deps (homeharvest) for the uv bridge
-.env / .env.example  config + keys (gitignored)
+mise.toml / mise.lock   pinned tool versions (node/aube/python/uv) + tasks
+.npmrc                  aube 7-day dependency cooldown (minimumReleaseAge)
+package.json            JS deps (citty, zod) + dev deps
+pyproject.toml          Python deps (homeharvest) for the uv bridge
+.env / .env.example     config + keys (.env gitignored; .env.example generated)
+AGENTS.md               generated agent-facing tool catalog
+housing                 ./housing shim → mise exec -- aube exec tsx src/main.ts
+housing.log             latest run's log (gitignored, truncated per run)
 src/
-  cli.ts             entrypoint (ingest | sources)
-  core/
-    types.ts         RawListing / Adapter / event types
-    env.ts           tiny .env loader (no dep)
-    http.ts          fetch w/ UA, timeout, retry, JSON-guard strip
-    normalize.ts     content hash + address normalization
-    db.ts            node:sqlite store + new/changed/removed diff
-    notify.ts        stdout digest + Pushover push (PUSHOVER_* env keys)
-    run.ts           orchestrator
-  adapters/
-    index.ts         adapter registry
-    craigslist.ts redfin.ts dahlia.ts zumper.ts rentsfnow.ts
-    rentcast.ts reddit.ts homeharvest.ts
-scripts/
-  homeharvest_fetch.py   Realtor.com bridge (invoked via `uv run`)
-data/                    SQLite DB lives here (gitignored)
+  main.ts               entrypoint: load .env → build tree from src/commands/ → run
+  discover.ts           src/commands/** → command tree (folders = groups, files = commands)
+  tool.ts / source.ts   defineTool() / defineSource() authoring primitives
+  args.ts catalog.ts    zod → CLI flags; live tree → introspect manifest
+  env/dotenv.ts spec.ts .env loader; per-command typed env validation
+  core/                 engine: db, http, normalize, notify, log, run, types
+  commands/             >>> add files here <<<  ingest.ts sources.ts introspect.ts + search/*.ts
+scripts/homeharvest_fetch.py   Python bridge (uv)
 ```
 
 ---
 
-## 9. Add a new source adapter
+## 9. Troubleshooting
 
-1. Create `src/adapters/<name>.ts` exporting an `Adapter`:
-   ```ts
-   export const mysource: Adapter = {
-     name: "mysource",
-     snapshotComplete: false,        // true ⇒ absence means "removed"
-     enabled() { return { ok: true }; }, // gate on an env key if needed
-     async fetch(): Promise<RawListing[]> { /* return canonical listings */ },
-   };
-   ```
-2. Register it in `src/adapters/index.ts`.
-3. `mise run typecheck && mise run ingest --source mysource`.
-
-`snapshotComplete=true` only if a fetch returns the COMPLETE current set (so a
-missing listing = removed). For "new today" feeds, keep it `false`.
-
----
-
-## 10. Troubleshooting
-
-- **Craigslist returns 0 / 403** → you're on a datacenter IP. Run from a
-  residential connection (home box). This is expected and documented.
-- **Redfin price is always null** → by design; this search variant omits price.
-  Enrichment via the per-property `floorPlans` endpoint is a planned follow-up.
-- **`node:sqlite` experimental warning** → silenced via `NODE_OPTIONS` in
-  `mise.toml`. Needs node ≥ 22.5 (bootstrap pins 22).
-- **`mise: command not found` inside a task** → run `mise install` first, or use
-  `mise exec -- <cmd>`.
-- **HomeHarvest empty / error** → ensure `uv sync` ran and `HOUSING_HOMEHARVEST=1`;
-  transient `403`s are Realtor.com throttling.
+- **Craigslist returns 0 / 403** → you're on a datacenter IP; run from a residential connection.
+- **A source says "disabled — set X"** → add `X` to `.env` (`.env.example` says where to get it).
+- **`aube: command not found`** → run `mise install` first, or use `./housing` / `mise exec -- aube …`.
+- **`node:sqlite` experimental warning** → silenced via `NODE_OPTIONS` in `mise.toml` (needs node ≥ 22.5, pinned).
+- **A new command doesn't appear** → it must `default export` a `defineTool`/`defineSource` and not start with `_`; run `mise run typecheck` (lazy imports surface file errors only when that command runs, so typecheck the whole graph).
+- **Read the last run in detail** → `./housing.log` (full detail always, even when stdout was quiet or `--json`).

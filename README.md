@@ -1,52 +1,64 @@
 # housing
 
-Automating the San Francisco rental hunt — monitoring for new/changed listings and surfacing matches proactively. Renting, not buying. Work anchor: **539 Bryant St, San Francisco, CA 94107**.
+Automated San Francisco rental hunt — ingest listings from many sources, diff for new/changed/removed, and surface them. Exposed as a discoverable CLI built for both engineers and LLM agents to drive. Work anchor: **539 Bryant St, San Francisco, CA 94107**.
 
-> **Setting this up?** Read **[SETUP.md](./SETUP.md)** — a step-by-step, LLM-runnable guide. TL;DR: install [`mise`](https://mise.jdx.dev), then `mise run bootstrap && mise run ingest`.
-
-## Status
-
-- **Phase 1 — data ingress mapping:** done. See [`data-ingress-catalog.md`](./data-ingress-catalog.md) (130 sources researched, 50 deep-verified).
-- **Phase 2 — Tier 1 ingest engine:** built. Pulls 8 sources → SQLite → `new`/`changed`/`removed` events. Five sources need no config; three unlock with keys.
+> **Setting this up (human or LLM)?** Read **[SETUP.md](./SETUP.md)** — a step-by-step, runnable guide. TL;DR: install [`mise`](https://mise.jdx.dev), then `mise run bootstrap`, then `./housing --help`.
 
 ## Quick start
 
 ```sh
-mise run bootstrap     # install tools (node/pnpm/python/uv) + deps
-mise run sources       # list adapters + which are enabled
-mise run ingest        # fetch all enabled sources, diff, notify
+mise run bootstrap        # installs node + aube + python + uv (via mise), then all deps
+./housing --help          # explore the command tree
+./housing sources         # which rental sources are enabled
+./housing ingest          # fetch all enabled sources, diff, notify
 ```
 
-The five no-config sources (Craigslist, Redfin, DAHLIA, Zumper, RentSFNow) work
-immediately. Add API keys in `.env` to enable RentCast, Reddit, and HomeHarvest —
-see [SETUP.md](./SETUP.md).
+`./housing <args>` is a thin wrapper; `mise run housing -- <args>` is equivalent.
 
-## How it works
+## The CLI is self-describing
+
+Everything is discoverable — you never need to read the source to know what exists:
+
+- **`./housing --help`** → top-level commands. **`./housing search --help`** → every source. **`./housing search rentcast --help`** → that command's args, examples, and required env. Recursive, at any depth.
+- **`./housing introspect --json`** → the whole command tree as one machine-readable manifest: each tool's `summary` (what), `when` (when to use it), `kind` (query/mutation), args (+ JSON Schema), examples, and required env. This is the manifest an LLM reads to know what to call and when.
+- **`--json`** on any command prints its result as JSON (stdout stays pure JSON; human logs go to the file).
+
+## Commands
+
+| Command | What |
+|---|---|
+| `housing ingest [--source a,b]` | Fetch enabled sources, diff against the DB, notify on new/changed/removed |
+| `housing sources` | List sources and whether each is enabled (required env present) |
+| `housing search <name>` | Run a single source and return its listings (`--json` for full output) |
+| `housing introspect [--format json\|env-example\|agents]` | Machine-readable manifest; also regenerates `.env.example` / `AGENTS.md` |
+
+Rental sources (under `housing search`): `craigslist`, `redfin`, `dahlia`, `zumper`, `rentsfnow`, `rentcast`, `reddit`, `homeharvest`. Five run with no config; the rest need a key (see `housing sources`).
+
+## Adding a tool (the whole point)
+
+Adding a search/tool is **write one file, drop it in `src/commands/`, done** — no central registry, no `switch`, no wiring. A file that default-exports `defineSource()` (a rental source) or `defineTool()` (any other verb) is automatically a registered, nested, help-documented, introspectable, env-validated command. Folders become command groups. Full recipe in [SETUP.md](./SETUP.md).
+
+## Architecture
 
 ```
-adapters (per source) → normalize → SQLite store → diff (new/changed/removed) → digest + Pushover push
+src/
+  main.ts        entrypoint: load .env, build the command tree from src/commands/, run
+  discover.ts    turns src/commands/** into the command tree (folders = groups, files = commands)
+  tool.ts        defineTool()  — any command (env fail-fast → zod args → run → --json)
+  source.ts      defineSource() — a rental source (also an ingestable adapter)
+  args.ts        zod schema → CLI flags (help + parsing)
+  catalog.ts     builds the introspect manifest from the live tree
+  env/           .env loader (dotenv.ts) + per-command typed validation (spec.ts)
+  core/          engine: db (SQLite diff), http, normalize, notify (Pushover), log
+  commands/      >>> the only place you add files <<<
+    ingest.ts sources.ts introspect.ts
+    search/      one file per rental source
 ```
 
-- **Tool/version management:** [`mise`](https://mise.jdx.dev) — one `mise run bootstrap` from a clean clone.
-- **Engine:** TypeScript (run via `tsx`), `node:sqlite` storage, Pushover notifier (set `PUSHOVER_TOKEN`/`PUSHOVER_USER` in `.env`); events also persist in the `events` table.
-- **Storage:** `data/housing.db` (gitignored). First run per source seeds silently; later runs emit events.
+- **Engine:** TypeScript run via `tsx` (no build step), `node:sqlite` storage. Each run diffs sources → `new`/`changed`/`removed` events, notifies via Pushover if `PUSHOVER_TOKEN`/`PUSHOVER_USER` are set.
+- **Discoverability:** [citty](https://github.com/unjs/citty) (recursive help) + [zod](https://zod.dev) v4 (one schema drives args, validation, help, and the `--json` manifest).
+- **Env:** secrets load from a gitignored `.env`; each command declares the vars it needs and fails fast (which var + where to get it) before doing any work.
+- **Toolchain:** [`mise`](https://mise.jdx.dev) pins node/aube/python/uv (exact versions in `mise.lock`); [`aube`](https://github.com/jdx/aube) is the package manager, with a **7-day dependency cooldown** (`.npmrc` `minimumReleaseAge`) so freshly-published packages can't slip in.
+- **Logs:** every run dual-writes to stdout and `./housing.log` (truncated each run, timestamped). `--verbose` for debug detail; the file always has full detail.
 
-## Tier 1 sources (built)
-
-| Source | Adapter | Config | Removal-aware |
-|---|---|---|---|
-| Craigslist `sapi` JSON | `craigslist` | none (residential IP) | no (new-today feed) |
-| Redfin `/stingray` rentals | `redfin` | none (US IP) | yes |
-| DAHLIA (SF affordable/BMR) | `dahlia` | none | yes |
-| Zumper `/listables` | `zumper` | none | no |
-| RentSFNow / Veritas sitemap | `rentsfnow` | none | yes |
-| RentCast API | `rentcast` | `RENTCAST_API_KEY` | no |
-| Reddit housing subs | `reddit` | `REDDIT_CLIENT_ID/SECRET` | no |
-| HomeHarvest (Realtor.com) | `homeharvest` | `HOUSING_HOMEHARVEST=1` | no |
-
-## Next up
-
-Tier-2 anti-bot portals (Zillow via Apify, Apartments.com), per-listing price
-enrichment for Redfin/RentSFNow, cross-source dedup, and a deploy target on the
-home box. See the catalog's Tier 2/3 and "gaps" sections, and the `.mcp.json`
-Playwright/Fetch servers for in-editor scraping.
+See [`data-ingress-catalog.md`](./data-ingress-catalog.md) for the research behind the sources (130 researched, 50 deep-verified) and the Tier 2/3 backlog.

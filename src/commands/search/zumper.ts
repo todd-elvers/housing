@@ -1,5 +1,8 @@
-import { httpFetch, stripJsonGuard } from "../core/http.ts";
-import type { Adapter, RawListing } from "../core/types.ts";
+import { z } from "zod";
+import { defineSource } from "../../source.ts";
+import { envSpec } from "../../env/spec.ts";
+import { httpFetch, stripJsonGuard } from "../../core/http.ts";
+import type { RawListing } from "../../core/types.ts";
 
 // Zumper internal listables API (SF-HQ, light anti-bot: Fastly, no DataDome).
 // Two steps: GET /bundle for a CSRF token + cookies, then POST /listables.
@@ -7,7 +10,6 @@ import type { Adapter, RawListing } from "../core/types.ts";
 // listed_on / previous_price / listing_status.
 const BASE = "https://www.zumper.com";
 const REFERER = `${BASE}/apartments-for-rent/san-francisco-ca`;
-const CITY = process.env.ZUMPER_CITY || "san-francisco-ca";
 
 interface Listable {
   listing_id: number;
@@ -33,14 +35,17 @@ interface Listable {
   modified_on?: number;
 }
 
-export const zumper: Adapter = {
+export default defineSource({
   name: "zumper",
+  summary: "Zumper internal listables API — the richest change-detection field set (created/modified/listed_on, previous_price, listing_status).",
+  when: "Use for precise diff tracking of SF portal listings; a single listables call may not return every unit, so don't infer removal.",
   // A single listables call may not return every SF unit, so don't infer removal.
   snapshotComplete: false,
-  enabled() {
-    return { ok: true };
+  requires: {
+    ZUMPER_CITY: envSpec(z.string().default("san-francisco-ca"), "Zumper city slug", ""),
   },
-  async fetch(): Promise<RawListing[]> {
+  async fetch(env): Promise<RawListing[]> {
+    const CITY = env.ZUMPER_CITY;
     const bundleRes = await httpFetch(`${BASE}/api/t/1/bundle`, {
       headers: { referer: REFERER, accept: "application/json" },
     });
@@ -64,7 +69,7 @@ export const zumper: Adapter = {
     const data = JSON.parse(stripJsonGuard(await res.text())) as { listables?: Listable[] };
     return (data.listables ?? []).map(map);
   },
-};
+});
 
 function map(l: Listable): RawListing {
   return {
