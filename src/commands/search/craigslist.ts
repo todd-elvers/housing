@@ -26,7 +26,8 @@ interface SapiResponse {
 
 export default defineSource({
   name: "craigslist",
-  summary: "Craigslist SF Bay apartments (sapi JSON) — the highest-volume, lowest-latency NEW-listing feed.",
+  summary:
+    "Craigslist SF Bay apartments (sapi JSON) — the highest-volume, lowest-latency NEW-listing feed.",
   when: "Use for the freshest private-landlord/sublet listings across the Bay Area. Requires a residential IP (datacenter IPs are 403'd).",
   snapshotComplete: false, // "posted today" feed — absence ≠ removed
   async fetch(): Promise<RawListing[]> {

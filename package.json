@@ -7,8 +7,10 @@
   "scripts": {
     "housing": "tsx src/main.ts",
     "test": "tsx --test test/tools.test.ts",
-    "typecheck": "tsc --noEmit",
-    "lint": "oxlint src"
+    "format": "oxfmt src test",
+    "lint": "oxlint src",
+    "typecheck": "tsgo --noEmit",
+    "check": "oxfmt src test && oxlint src && tsgo --noEmit"
   },
   "dependencies": {
     "citty": "^0.1.6",
@@ -16,6 +18,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "@typescript/native-preview": "^7.0.0-dev.20260630.1",
+    "oxfmt": "^0.57.0",
     "oxlint": "^0.15.6",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"

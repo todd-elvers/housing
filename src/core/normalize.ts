@@ -18,14 +18,16 @@ export function contentHash(l: RawListing): string {
 /** Loose address normalization for future cross-source dedup. Not authoritative. */
 export function normalizeAddress(addr?: string | null): string | null {
   if (!addr) return null;
-  return addr
-    .toLowerCase()
-    .replace(/[.,#]/g, " ")
-    .replace(/\bstreet\b/g, "st")
-    .replace(/\bavenue\b/g, "ave")
-    .replace(/\bboulevard\b/g, "blvd")
-    .replace(/\bdrive\b/g, "dr")
-    .replace(/\bapartment\b|\bapt\b|\bunit\b/g, "")
-    .replace(/\s+/g, " ")
-    .trim() || null;
+  return (
+    addr
+      .toLowerCase()
+      .replace(/[.,#]/g, " ")
+      .replace(/\bstreet\b/g, "st")
+      .replace(/\bavenue\b/g, "ave")
+      .replace(/\bboulevard\b/g, "blvd")
+      .replace(/\bdrive\b/g, "dr")
+      .replace(/\bapartment\b|\bapt\b|\bunit\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim() || null
+  );
 }

@@ -68,11 +68,7 @@ export class Store {
    * Returns counts + the new/changed/removed events. On a source's first-ever
    * run everything is "seeded" silently (no events) to avoid a notification flood.
    */
-  syncSource(
-    source: string,
-    listings: RawListing[],
-    snapshotComplete: boolean,
-  ): SourceSyncSummary {
+  syncSource(source: string, listings: RawListing[], snapshotComplete: boolean): SourceSyncSummary {
     const runTs = Date.now();
     const seedMode = this.countForSource(source) === 0;
     const events: ListingEvent[] = [];
@@ -186,9 +182,7 @@ export class Store {
           title: string | null;
           price: number | null;
         }[];
-        const markRemoved = this.db.prepare(
-          "UPDATE listings SET status = 'removed' WHERE id = ?",
-        );
+        const markRemoved = this.db.prepare("UPDATE listings SET status = 'removed' WHERE id = ?");
         for (const s of stale) {
           markRemoved.run(s.id);
           insertEvent.run(s.id, source, "removed", "no longer listed", runTs);

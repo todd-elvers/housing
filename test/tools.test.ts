@@ -60,9 +60,13 @@ test("contract: every tool is well-formed", async (t) => {
     await t.test(leaf.argv, () => {
       assert.ok(leaf.summary && leaf.summary.length > 0, "has a summary (WHAT)");
       assert.ok(leaf.when && leaf.when.length > 0, "has a when (WHEN to use)");
-      assert.ok(leaf.kind === "query" || leaf.kind === "mutation", `kind is query|mutation (got ${leaf.kind})`);
+      assert.ok(
+        leaf.kind === "query" || leaf.kind === "mutation",
+        `kind is query|mutation (got ${leaf.kind})`,
+      );
       for (const a of leaf.args ?? []) assert.ok(a.name && a.type, "each arg has name + type");
-      for (const r of leaf.requires ?? []) assert.ok(r.key && r.description, "each env decl has key + description");
+      for (const r of leaf.requires ?? [])
+        assert.ok(r.key && r.description, "each env decl has key + description");
       assert.ok(!seen.has(leaf.argv), `command path is unique: ${leaf.argv}`);
       seen.add(leaf.argv);
     });
@@ -86,7 +90,7 @@ test("cli: entrypoint, help, and the introspect manifest work", async (t) => {
     const argvs = new Set<string>();
     (function walk(n: { argv: string; children?: unknown[] }) {
       argvs.add(n.argv);
-      (n.children as typeof n[] | undefined)?.forEach(walk);
+      (n.children as (typeof n)[] | undefined)?.forEach(walk);
     })(manifest);
     for (const leaf of leaves) assert.ok(argvs.has(leaf.argv), `manifest includes ${leaf.argv}`);
   });
@@ -94,13 +98,16 @@ test("cli: entrypoint, help, and the introspect manifest work", async (t) => {
   await t.test("`sources` lists every discovered source", () => {
     const r = runCli(["sources"]);
     assert.equal(r.status, 0, r.stderr);
-    for (const s of sources) assert.match(r.stdout, new RegExp(`\\b${s.name}\\b`), `lists ${s.name}`);
+    for (const s of sources)
+      assert.match(r.stdout, new RegExp(`\\b${s.name}\\b`), `lists ${s.name}`);
   });
 
   // A disabled source proves the structured fail-fast CLI path (picked dynamically).
   const disabled = sources.find((s) => !s.enabled().ok);
   await t.test(
-    disabled ? `disabled source '${disabled.name}' fails fast with env_missing` : "no disabled source (skipped)",
+    disabled
+      ? `disabled source '${disabled.name}' fails fast with env_missing`
+      : "no disabled source (skipped)",
     { skip: !disabled },
     () => {
       const r = runCli(["search", disabled!.name, "--json"]);
@@ -115,7 +122,9 @@ test("cli: entrypoint, help, and the introspect manifest work", async (t) => {
   // (fresh seed ⇒ 0 events ⇒ no notification side effects).
   const enabled = sources.find((s) => s.enabled().ok);
   await t.test(
-    enabled ? `ingest --source ${enabled.name} runs end-to-end` : "no enabled source to ingest (skipped)",
+    enabled
+      ? `ingest --source ${enabled.name} runs end-to-end`
+      : "no enabled source to ingest (skipped)",
     { skip: !enabled || !LIVE },
     () => {
       rmSync(TEST_DB, { force: true });

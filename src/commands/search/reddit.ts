@@ -23,14 +23,31 @@ interface RedditChild {
 
 export default defineSource({
   name: "reddit",
-  summary: "Reddit OAuth search across SF housing subs — NEW-lead intel on private-landlord/sublet posts, not structured listings.",
+  summary:
+    "Reddit OAuth search across SF housing subs — NEW-lead intel on private-landlord/sublet posts, not structured listings.",
   when: "Use to surface off-market leads (private landlords, sublets) posted to r/sanfrancisco, r/bayarea, r/AskSF; immutable posts, so new-only. Needs a free Reddit script app.",
   snapshotComplete: false,
   requires: {
-    REDDIT_CLIENT_ID: envSpec(z.string().min(1), "Reddit script-app client id", "https://www.reddit.com/prefs/apps"),
-    REDDIT_CLIENT_SECRET: envSpec(z.string().min(1), "Reddit script-app secret", "https://www.reddit.com/prefs/apps"),
-    REDDIT_USERNAME: envSpec(z.string().optional(), "Reddit username (used only to build a descriptive User-Agent)", ""),
-    REDDIT_SUBS: envSpec(z.string().default("sanfrancisco,bayarea,AskSF"), "Comma-separated housing subreddits", ""),
+    REDDIT_CLIENT_ID: envSpec(
+      z.string().min(1),
+      "Reddit script-app client id",
+      "https://www.reddit.com/prefs/apps",
+    ),
+    REDDIT_CLIENT_SECRET: envSpec(
+      z.string().min(1),
+      "Reddit script-app secret",
+      "https://www.reddit.com/prefs/apps",
+    ),
+    REDDIT_USERNAME: envSpec(
+      z.string().optional(),
+      "Reddit username (used only to build a descriptive User-Agent)",
+      "",
+    ),
+    REDDIT_SUBS: envSpec(
+      z.string().default("sanfrancisco,bayarea,AskSF"),
+      "Comma-separated housing subreddits",
+      "",
+    ),
   },
   async fetch(env): Promise<RawListing[]> {
     const subs = env.REDDIT_SUBS.split(",")

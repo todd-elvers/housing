@@ -48,7 +48,9 @@ export function defineSource<E extends EnvDecl = Record<never, never>>(def: {
     run: async ({ env, log }) => {
       const started = Date.now();
       const listings = await def.fetch(env as EnvValues<E>, { log });
-      log.info(`search ${def.name}: fetched ${listings.length} listings in ${Date.now() - started}ms`);
+      log.info(
+        `search ${def.name}: fetched ${listings.length} listings in ${Date.now() - started}ms`,
+      );
       return listings;
     },
   });
@@ -57,7 +59,8 @@ export function defineSource<E extends EnvDecl = Record<never, never>>(def: {
     snapshotComplete: def.snapshotComplete,
     order: def.order ?? 100,
     enabled: () => (def.requires ? checkEnv(def.requires) : { ok: true }),
-    fetch: () => def.fetch((def.requires ? validateEnv(def.requires) : {}) as EnvValues<E>, { log }),
+    fetch: () =>
+      def.fetch((def.requires ? validateEnv(def.requires) : {}) as EnvValues<E>, { log }),
   };
   (cmd as Record<symbol, unknown>)[SOURCE] = contract;
   return cmd;
@@ -70,7 +73,9 @@ export async function loadSources(): Promise<SourceContract[]> {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (!entry.isFile() || entry.name.startsWith("_") || !entry.name.endsWith(".ts")) continue;
     const mod = (await import(pathToFileURL(join(dir, entry.name)).href)) as { default?: unknown };
-    const contract = (mod.default as Record<symbol, unknown> | undefined)?.[SOURCE] as SourceContract | undefined;
+    const contract = (mod.default as Record<symbol, unknown> | undefined)?.[SOURCE] as
+      | SourceContract
+      | undefined;
     if (contract) out.push(contract);
   }
   out.sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));

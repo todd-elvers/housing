@@ -14,7 +14,8 @@ const SITEMAPS = (n: number) =>
 
 export default defineSource({
   name: "rentsfnow",
-  summary: "RentSFNow / Veritas sitemap crawl — the largest single private SF/Oakland portfolio's full unit set + relist/delist changes.",
+  summary:
+    "RentSFNow / Veritas sitemap crawl — the largest single private SF/Oakland portfolio's full unit set + relist/delist changes.",
   when: "Use for complete coverage of a big private-landlord portfolio (absence ⇒ removed); no price/availability, just the unit URL set + lastmod change tags.",
   snapshotComplete: true,
   async fetch(): Promise<RawListing[]> {
@@ -30,9 +31,7 @@ export default defineSource({
         break;
       }
       const entries = [
-        ...xml.matchAll(
-          /<url>\s*<loc>([^<]+)<\/loc>\s*(?:<lastmod>([^<]+)<\/lastmod>)?/g,
-        ),
+        ...xml.matchAll(/<url>\s*<loc>([^<]+)<\/loc>\s*(?:<lastmod>([^<]+)<\/lastmod>)?/g),
       ];
       if (entries.length === 0) break;
       for (const m of entries) {

@@ -23,13 +23,26 @@ interface HhRow {
 
 export default defineSource({
   name: "homeharvest",
-  summary: "Realtor.com rentals via the HomeHarvest Python scraper, shelled out through a `uv run` bridge.",
+  summary:
+    "Realtor.com rentals via the HomeHarvest Python scraper, shelled out through a `uv run` bridge.",
   when: "Use for Realtor.com/MLS inventory not covered by the JS sources; requires local `uv sync` and HOUSING_HOMEHARVEST=1.",
   snapshotComplete: false,
   requires: {
-    HOUSING_HOMEHARVEST: envSpec(z.literal("1"), "Set to 1 to enable (needs `uv sync` first)", "run: uv sync"),
-    HOMEHARVEST_LOCATION: envSpec(z.string().default("San Francisco, CA"), "Location to scrape", ""),
-    HOMEHARVEST_PAST_DAYS: envSpec(z.coerce.number().default(3), "Only listings from the last N days", ""),
+    HOUSING_HOMEHARVEST: envSpec(
+      z.literal("1"),
+      "Set to 1 to enable (needs `uv sync` first)",
+      "run: uv sync",
+    ),
+    HOMEHARVEST_LOCATION: envSpec(
+      z.string().default("San Francisco, CA"),
+      "Location to scrape",
+      "",
+    ),
+    HOMEHARVEST_PAST_DAYS: envSpec(
+      z.coerce.number().default(3),
+      "Only listings from the last N days",
+      "",
+    ),
   },
   async fetch(env): Promise<RawListing[]> {
     const res = spawnSync(

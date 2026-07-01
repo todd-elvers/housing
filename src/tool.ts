@@ -26,7 +26,9 @@ export interface ToolDef<I extends z.ZodObject<z.ZodRawShape>, E extends EnvDecl
   /** Env this command needs; validated BEFORE run(). */
   requires?: E;
   examples?: string[];
-  run(ctx: ToolContext<I extends z.ZodObject<z.ZodRawShape> ? z.infer<I> : Record<never, never>, E>): unknown | Promise<unknown>;
+  run(
+    ctx: ToolContext<I extends z.ZodObject<z.ZodRawShape> ? z.infer<I> : Record<never, never>, E>,
+  ): unknown | Promise<unknown>;
 }
 
 /** Author a command. A file that default-exports this becomes a registered, nested, introspectable command. */
@@ -36,7 +38,10 @@ export function defineTool<
 >(def: ToolDef<I, E>): CommandDef {
   const cmd = defineCommand({
     meta: { description: renderDescription(def) },
-    args: { ...zodToCittyArgs(def.input), json: { type: "boolean", description: "Emit the result as JSON" } },
+    args: {
+      ...zodToCittyArgs(def.input),
+      json: { type: "boolean", description: "Emit the result as JSON" },
+    },
     async run({ args }) {
       const asJson = Boolean((args as Record<string, unknown>).json);
 
@@ -52,7 +57,9 @@ export function defineTool<
       const raw = strip(args as Record<string, unknown>);
       const parsed = def.input ? def.input.safeParse(raw) : ({ success: true, data: {} } as const);
       if (!parsed.success) {
-        const msg = parsed.error.issues.map((i) => `--${i.path.join(".")}: ${i.message}`).join("; ");
+        const msg = parsed.error.issues
+          .map((i) => `--${i.path.join(".")}: ${i.message}`)
+          .join("; ");
         structuredFail(new Error(msg), asJson);
       }
 
@@ -65,7 +72,10 @@ export function defineTool<
       }
       if (result !== undefined) {
         if (asJson) log.out(JSON.stringify(result, null, 2));
-        else log.print(`(${Array.isArray(result) ? `${result.length} result(s)` : "done"} — add --json for full output)`);
+        else
+          log.print(
+            `(${Array.isArray(result) ? `${result.length} result(s)` : "done"} — add --json for full output)`,
+          );
       }
     },
   }) as CommandDef;

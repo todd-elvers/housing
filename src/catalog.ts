@@ -37,8 +37,13 @@ async function unwrap<T>(v: T | (() => T | Promise<T>)): Promise<T> {
 }
 
 /** Walk the citty tree, resolving every lazy node, and read the META/SOURCE symbols into a plain catalog. */
-export async function buildCatalog(cmd: CommandDef, path: string[] = ["housing"]): Promise<CatalogNode> {
-  const def = (cmd as Record<symbol, unknown>)[META] as ToolDef<z.ZodObject<z.ZodRawShape>, EnvDecl> | undefined;
+export async function buildCatalog(
+  cmd: CommandDef,
+  path: string[] = ["housing"],
+): Promise<CatalogNode> {
+  const def = (cmd as Record<symbol, unknown>)[META] as
+    | ToolDef<z.ZodObject<z.ZodRawShape>, EnvDecl>
+    | undefined;
   const source = (cmd as Record<symbol, unknown>)[SOURCE] as SourceContract | undefined;
   const sub = cmd.subCommands ? await unwrap(cmd.subCommands) : undefined;
 
@@ -71,7 +76,10 @@ export async function buildCatalog(cmd: CommandDef, path: string[] = ["housing"]
 
 function describeArgs(input: z.ZodObject<z.ZodRawShape>): CatalogArg[] {
   const json = safeJsonSchema(input) as {
-    properties?: Record<string, { type?: string; description?: string; enum?: string[]; default?: unknown }>;
+    properties?: Record<
+      string,
+      { type?: string; description?: string; enum?: string[]; default?: unknown }
+    >;
     required?: string[];
   };
   const required = new Set(json.required ?? []);

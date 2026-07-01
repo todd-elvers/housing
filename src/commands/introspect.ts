@@ -36,7 +36,10 @@ function scope(node: CatalogNode, parts: string[]): CatalogNode | null {
   return child ? scope(child, rest) : null;
 }
 
-function collectEnv(node: CatalogNode, acc = new Map<string, CatalogEnv>()): Map<string, CatalogEnv> {
+function collectEnv(
+  node: CatalogNode,
+  acc = new Map<string, CatalogEnv>(),
+): Map<string, CatalogEnv> {
   for (const e of node.requires ?? []) if (!acc.has(e.key)) acc.set(e.key, e);
   for (const c of node.children ?? []) collectEnv(c, acc);
   return acc;
@@ -74,9 +77,13 @@ function renderAgents(catalog: CatalogNode): string {
       lines.push(node.summary);
       if (node.when) lines.push(`- **When:** ${node.when}`);
       if (node.args?.length)
-        lines.push(`- **Args:** ${node.args.map((a) => `--${a.name}${a.required ? "*" : ""}`).join(", ")}`);
+        lines.push(
+          `- **Args:** ${node.args.map((a) => `--${a.name}${a.required ? "*" : ""}`).join(", ")}`,
+        );
       if (node.requires?.length)
-        lines.push(`- **Env:** ${node.requires.map((r) => r.key + (r.required ? "*" : "")).join(", ")}`);
+        lines.push(
+          `- **Env:** ${node.requires.map((r) => r.key + (r.required ? "*" : "")).join(", ")}`,
+        );
       if (node.examples?.length) lines.push(`- **Example:** \`${node.examples[0]}\``);
       lines.push("");
     }

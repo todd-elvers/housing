@@ -37,7 +37,8 @@ interface Listable {
 
 export default defineSource({
   name: "zumper",
-  summary: "Zumper internal listables API — the richest change-detection field set (created/modified/listed_on, previous_price, listing_status).",
+  summary:
+    "Zumper internal listables API — the richest change-detection field set (created/modified/listed_on, previous_price, listing_status).",
   when: "Use for precise diff tracking of SF portal listings; a single listables call may not return every unit, so don't infer removal.",
   // A single listables call may not return every SF unit, so don't infer removal.
   snapshotComplete: false,

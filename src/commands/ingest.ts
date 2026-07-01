@@ -5,7 +5,8 @@ import { loadSources } from "../source.ts";
 import { ingestSources } from "../core/run.ts";
 
 export default defineTool({
-  summary: "Fetch all enabled sources, diff against the DB, and notify on new/changed/removed listings.",
+  summary:
+    "Fetch all enabled sources, diff against the DB, and notify on new/changed/removed listings.",
   when: "Run on a schedule (or by hand) to refresh the SF rental database and surface what changed since last run.",
   kind: "mutation",
   input: z.object({

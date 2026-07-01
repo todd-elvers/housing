@@ -64,7 +64,9 @@ function buildMessage(
   const add = (label: string, evs: ListingEvent[]) => {
     for (const e of evs.slice(0, 6)) {
       const title = esc((e.title ?? "(untitled)").slice(0, 60));
-      lines.push(`<b>${label}</b> ${title} — ${esc(e.detail)}\n<a href="${escAttr(e.url)}">link</a>`);
+      lines.push(
+        `<b>${label}</b> ${title} — ${esc(e.detail)}\n<a href="${escAttr(e.url)}">link</a>`,
+      );
     }
   };
   add("NEW", news);

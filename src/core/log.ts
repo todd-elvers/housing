@@ -28,11 +28,12 @@ class Logger {
 
   constructor() {
     this.jsonMode = argvHas("--json");
-    this.threshold = argvHas("--verbose", "-v") || process.env.HOUSING_VERBOSE === "1"
-      ? ORDER.debug
-      : argvHas("--quiet", "-q")
-        ? ORDER.warn
-        : ORDER.info;
+    this.threshold =
+      argvHas("--verbose", "-v") || process.env.HOUSING_VERBOSE === "1"
+        ? ORDER.debug
+        : argvHas("--quiet", "-q")
+          ? ORDER.warn
+          : ORDER.info;
     try {
       mkdirSync(REPO_ROOT, { recursive: true });
       this.fd = openSync(LOG_FILE, "w"); // "w" truncates any previous log
@@ -65,10 +66,18 @@ class Logger {
     }
   }
 
-  debug(msg: string): void { this.emit("debug", msg); }
-  info(msg: string): void { this.emit("info", msg); }
-  warn(msg: string): void { this.emit("warn", msg); }
-  error(msg: string): void { this.emit("error", msg); }
+  debug(msg: string): void {
+    this.emit("debug", msg);
+  }
+  info(msg: string): void {
+    this.emit("info", msg);
+  }
+  warn(msg: string): void {
+    this.emit("warn", msg);
+  }
+  error(msg: string): void {
+    this.emit("error", msg);
+  }
 
   /** Human-facing output (digests, tables). Mirrored to file; suppressed from stdout under --json. */
   print(msg = ""): void {

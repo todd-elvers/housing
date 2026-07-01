@@ -25,11 +25,16 @@ interface RcListing {
 
 export default defineSource({
   name: "rentcast",
-  summary: "RentCast REST aggregator — the legal Tier-1 backbone with listedDate/status for clean diffs.",
+  summary:
+    "RentCast REST aggregator — the legal Tier-1 backbone with listedDate/status for clean diffs.",
   when: "Use for a normalized cross-source rental snapshot of SF; misses Craigslist-only / private-landlord units.",
   snapshotComplete: false,
   requires: {
-    RENTCAST_API_KEY: envSpec(z.string().min(1), "RentCast API key (sent as X-Api-Key)", "https://app.rentcast.io"),
+    RENTCAST_API_KEY: envSpec(
+      z.string().min(1),
+      "RentCast API key (sent as X-Api-Key)",
+      "https://app.rentcast.io",
+    ),
     RENTCAST_CITY: envSpec(z.string().default("San Francisco"), "City to query", ""),
   },
   async fetch(env): Promise<RawListing[]> {

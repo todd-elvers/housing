@@ -30,7 +30,9 @@ export function zodToCittyArgs(input?: z.ZodObject<z.ZodRawShape>): ArgsDef {
       type: isBool ? "boolean" : "string",
       description: parts.join(" "),
       required: required.has(name) && prop.default === undefined,
-      ...(prop.default !== undefined ? { default: isBool ? Boolean(prop.default) : String(prop.default) } : {}),
+      ...(prop.default !== undefined
+        ? { default: isBool ? Boolean(prop.default) : String(prop.default) }
+        : {}),
       ...(isBool ? {} : { valueHint: typeof prop.type === "string" ? prop.type : "value" }),
     } as ArgsDef[string];
   }

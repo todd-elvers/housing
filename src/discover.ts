@@ -17,7 +17,10 @@ export function loadCommands(dir: string): Record<string, () => Promise<CommandD
     if (entry.isDirectory()) {
       const sub = join(dir, entry.name);
       out[entry.name] = async () =>
-        ({ meta: { name: entry.name, description: `${entry.name} commands` }, subCommands: loadCommands(sub) }) as CommandDef;
+        ({
+          meta: { name: entry.name, description: `${entry.name} commands` },
+          subCommands: loadCommands(sub),
+        }) as CommandDef;
     } else if (entry.name.endsWith(".ts")) {
       const name = entry.name.slice(0, -3);
       out[name] = () =>

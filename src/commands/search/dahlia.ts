@@ -25,7 +25,8 @@ interface DahliaListing {
 
 export default defineSource({
   name: "dahlia",
-  summary: "SF DAHLIA affordable/BMR housing portal — the authoritative feed for income-capped lottery rentals.",
+  summary:
+    "SF DAHLIA affordable/BMR housing portal — the authoritative feed for income-capped lottery rentals.",
   when: "Use for SF affordable/below-market-rate units; mostly application-gated lottery listings, so skip it for a market-rate hunt.",
   snapshotComplete: true,
   async fetch(): Promise<RawListing[]> {

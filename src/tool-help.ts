@@ -28,7 +28,11 @@ export function renderDescription(def: {
 export function structuredFail(err: unknown, asJson: boolean): never {
   const isEnv = err instanceof EnvError;
   const code = isEnv ? "env_missing" : "error";
-  const message = isEnv ? "environment not ready" : err instanceof Error ? err.message : String(err);
+  const message = isEnv
+    ? "environment not ready"
+    : err instanceof Error
+      ? err.message
+      : String(err);
   if (asJson) {
     const payload: Record<string, unknown> = { error: message, code };
     if (isEnv) {

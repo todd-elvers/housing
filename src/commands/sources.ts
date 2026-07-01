@@ -3,7 +3,8 @@ import { loadSources } from "../source.ts";
 import { log } from "../core/log.ts";
 
 export default defineTool({
-  summary: "List every rental source and whether it is currently enabled (its required env is present).",
+  summary:
+    "List every rental source and whether it is currently enabled (its required env is present).",
   when: "Use to see which sources `ingest` will run and what config each still needs.",
   kind: "query",
   async run() {

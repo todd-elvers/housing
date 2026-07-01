@@ -28,7 +28,8 @@ interface RedfinHome {
 
 export default defineSource({
   name: "redfin",
-  summary: "Redfin Stingray rentals search for SF — a full paginated snapshot of MLS-listed units with status badges.",
+  summary:
+    "Redfin Stingray rentals search for SF — a full paginated snapshot of MLS-listed units with status badges.",
   when: "Use for a complete NEW/REMOVED snapshot of Redfin-listed SF rentals; this variant omits inline price/beds (detail call needed).",
   snapshotComplete: true, // full SF search ⇒ absence means delisted
   requires: {
@@ -59,7 +60,10 @@ export default defineSource({
 });
 
 function map(hd: RedfinHome): RawListing {
-  const sashes = (hd.sashes ?? []).map((s) => s.name).filter(Boolean).join(",");
+  const sashes = (hd.sashes ?? [])
+    .map((s) => s.name)
+    .filter(Boolean)
+    .join(",");
   const c = hd.addressInfo?.centroid?.centroid;
   return {
     sourceId: hd.propertyId!,
