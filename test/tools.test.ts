@@ -9,7 +9,7 @@ import type { CommandDef } from "citty";
 import { loadEnv } from "../src/env/dotenv.ts";
 import { loadCommands } from "../src/discover.ts";
 import { buildCatalog, type CatalogNode } from "../src/catalog.ts";
-import { loadSources, type SourceContract } from "../src/source.ts";
+import { loadSources, isPaid, type SourceContract } from "../src/source.ts";
 
 // This test is SELF-MAINTAINING: it discovers every command + source the same
 // way the CLI does (loadCommands / loadSources / introspect), so adding a tool
@@ -122,7 +122,7 @@ test("cli: entrypoint, help, and the introspect manifest work", async (t) => {
 
   // A full ingest against a throwaway DB proves the mutation pipeline end-to-end
   // (fresh seed ⇒ 0 events ⇒ no notification side effects). Use a free tier-1 source.
-  const enabled = sources.find((s) => s.enabled().ok && s.tier === 1);
+  const enabled = sources.find((s) => s.enabled().ok && !isPaid(s));
   await t.test(
     enabled
       ? `ingest --source ${enabled.name} runs end-to-end`
@@ -156,7 +156,7 @@ test("sources: each one fetches (enabled) or fails fast (disabled)", async (t) =
         tt.skip("HOUSING_TEST_LIVE=0");
         return;
       }
-      if (s.tier >= 2 && !PAID) {
+      if (isPaid(s) && !PAID) {
         tt.skip("tier-2 paid source — set HOUSING_TEST_PAID=1 to live-fetch");
         return;
       }

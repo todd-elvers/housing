@@ -1,5 +1,5 @@
 import { defineTool } from "../tool.ts";
-import { loadSources } from "../source.ts";
+import { loadSources, isPaid } from "../source.ts";
 import { log } from "../core/log.ts";
 
 export default defineTool({
@@ -14,7 +14,7 @@ export default defineTool({
       const state = s.enabled();
       const mark = state.ok ? "●" : "○";
       const snap = s.snapshotComplete ? "snapshot" : "feed    ";
-      const tier = s.tier >= 2 ? " ⚠paid" : "      ";
+      const tier = isPaid(s) ? " ⚠paid" : "      ";
       const note = state.ok ? "enabled" : `disabled — ${state.reason}`;
       log.print(`  ${mark} ${s.name.padEnd(12)} [${snap}]${tier}  ${note}`);
     }

@@ -71,13 +71,19 @@ function decodeItem(it: unknown[], decode: SapiResponse["data"]["decode"]): RawL
     }
   }
 
-  // Craigslist has no structured bath field, but titles almost always encode it
-  // ("3BR / 3BA", "3 bd 2 ba", "2 bath"). Parse it so bath filtering works.
-  const bathMatch = title.match(/(\d+(?:\.\d)?)\s*(?:ba\b|bath)/i);
-  const baths = bathMatch ? Number(bathMatch[1]) : null;
+  // Craigslist has no structured bath field, but titles usually encode it
+  // ("3BR / 3BA", "2.5 bath"). Match the full fraction (not a single decimal digit,
+  // which backtracks "1.25 ba" → 25) and cap implausible counts so address tokens
+  // like "24 Bath St" / "24 Bedford St" don't become bath/bed counts.
+  const bathMatch = title.match(/(\d+(?:\.\d+)?)\s*(?:ba\b|baths?\b)/i);
+  let baths = bathMatch ? Number(bathMatch[1]) : null;
+  if (baths != null && (baths <= 0 || baths > 10)) baths = null;
   if (beds == null) {
-    const bedMatch = title.match(/(\d+)\s*(?:br\b|bd\b|bed)/i);
-    if (bedMatch) beds = Number(bedMatch[1]);
+    const bedMatch = title.match(/(\d+(?:\.\d+)?)\s*(?:br\b|bd\b|beds?\b)/i);
+    if (bedMatch) {
+      const n = Number(bedMatch[1]);
+      beds = n > 0 && n <= 12 ? n : null;
+    }
   }
 
   const loc = locIdx != null ? decode.locations[locIdx] : undefined;

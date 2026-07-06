@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { defineTool } from "../tool.ts";
 import { envSpec } from "../env/spec.ts";
 import { log } from "../core/log.ts";
+import { facetPath } from "../core/facet.ts";
 
 // Query the ingested DB. Bed/bath filters match EITHER a per-unit listing
 // (craigslist) OR a building whose range covers the target (zumper's
@@ -59,20 +60,20 @@ export default defineTool({
     const where = ["status = 'active'"];
     const params: (string | number)[] = [];
     if (input.beds !== undefined) {
-      where.push(
-        "(beds = ? OR (json_extract(raw,'$.minBeds') <= ? AND json_extract(raw,'$.maxBeds') >= ?))",
-      );
+      where.push(`(beds = ? OR (${facetPath("minBeds")} <= ? AND ${facetPath("maxBeds")} >= ?))`);
       params.push(input.beds, input.beds, input.beds);
     }
     if (input.baths !== undefined) {
       where.push(
-        "(baths = ? OR (json_extract(raw,'$.minBaths') <= ? AND json_extract(raw,'$.maxBaths') >= ?))",
+        `(baths = ? OR (${facetPath("minBaths")} <= ? AND ${facetPath("maxBaths")} >= ?))`,
       );
       params.push(input.baths, input.baths, input.baths);
     }
     if (input.minPrice !== undefined) {
-      where.push("price >= ?");
-      params.push(input.minPrice);
+      // Range-overlap: a building matches if its top rent (raw.maxPrice) clears the floor.
+      // (price === raw.minPrice for range sources, so the maxPrice clause below is already correct.)
+      where.push(`(price >= ? OR ${facetPath("maxPrice")} >= ?)`);
+      params.push(input.minPrice, input.minPrice);
     }
     if (input.maxPrice !== undefined) {
       where.push("price <= ?");
@@ -83,10 +84,17 @@ export default defineTool({
       params.push(input.source);
     }
     if (input.match) {
+      // Match title / address / amenity VALUE only (never the raw JSON key names),
+      // with LIKE wildcards (% _ \) in the user term escaped.
       where.push(
-        "(lower(coalesce(title,'')) LIKE ? OR lower(coalesce(address,'')) LIKE ? OR lower(coalesce(raw,'')) LIKE ?)",
+        "(lower(coalesce(title,'')) LIKE ? ESCAPE '\\' " +
+          "OR lower(coalesce(address,'')) LIKE ? ESCAPE '\\' " +
+          "OR lower(coalesce(" +
+          facetPath("amenities") +
+          ",'')) LIKE ? ESCAPE '\\')",
       );
-      const m = `%${input.match.toLowerCase()}%`;
+      const esc = input.match.toLowerCase().replace(/[\\%_]/g, "\\$&");
+      const m = `%${esc}%`;
       params.push(m, m, m);
     }
 
@@ -131,8 +139,13 @@ export default defineTool({
         url: r.url,
       };
     });
-    if (anchor)
+    let hiddenNoCoord = 0;
+    if (anchor) {
+      // A radius query can't place a coordinate-less listing, so it's excluded — but
+      // report the count instead of silently dropping matching-but-unlocatable rows.
+      hiddenNoCoord = results.filter((r) => r.distanceKm == null).length;
       results = results.filter((r) => r.distanceKm != null && r.distanceKm <= input.radius);
+    }
     results.sort(
       (a, b) =>
         (a.distanceKm ?? 1e9) - (b.distanceKm ?? 1e9) || (a.price ?? 1e9) - (b.price ?? 1e9),
@@ -153,6 +166,9 @@ export default defineTool({
       );
       log.print(`          ${r.neighborhood ?? ""}  ${r.url}`);
     }
+    if (hiddenNoCoord > 0) {
+      log.print(`  (${hiddenNoCoord} more match(es) hidden — no coordinates to check distance)`);
+    }
     return results;
   },
 });
@@ -168,10 +184,10 @@ function parseRaw(raw: string | null): Record<string, unknown> {
 }
 
 function label(col: number | null, min: unknown, max: unknown, unit: string): string {
-  if (typeof min === "number" && typeof max === "number" && (min !== max || col == null)) {
-    return min === max ? `${min}${unit}` : `${min}-${max}${unit}`;
-  }
-  return col != null ? `${col}${unit}` : `?${unit}`;
+  const hasRange = typeof min === "number" && typeof max === "number";
+  if (hasRange && min !== max) return `${min}-${max}${unit}`;
+  const single = col ?? (hasRange ? (min as number) : null);
+  return single != null ? `${single}${unit}` : `?${unit}`;
 }
 
 const round = (n: number) => Math.round(n * 100) / 100;

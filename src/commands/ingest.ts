@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { defineTool } from "../tool.ts";
 import { envSpec } from "../env/spec.ts";
-import { loadSources } from "../source.ts";
+import { loadSources, isPaid } from "../source.ts";
 import { ingestSources } from "../core/run.ts";
 
 export default defineTool({
@@ -46,7 +46,7 @@ export default defineTool({
       if (unknown.length) throw new Error(`unknown source(s): ${unknown.join(", ")}`);
       sources = sources.filter((s) => want.has(s.name)); // explicit names → any tier
     } else if (!input.paid) {
-      sources = sources.filter((s) => s.tier === 1); // default: free/tier-1 only, never spend money
+      sources = sources.filter((s) => !isPaid(s)); // default: free sources only, never spend money
     }
     const summaries = await ingestSources(sources, env.HOUSING_DB);
     return {

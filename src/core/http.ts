@@ -53,15 +53,25 @@ export function stripJsonGuard(s: string): string {
   return out;
 }
 
+/** Origin + path only — drops any query string so a URL-embedded credential can't leak into logs. */
+function safeUrl(u: string): string {
+  try {
+    const x = new URL(u);
+    return x.origin + x.pathname;
+  } catch {
+    return "[url]";
+  }
+}
+
 export async function fetchJson<T = unknown>(url: string, opts?: FetchOpts): Promise<T> {
   const res = await httpFetch(url, opts);
-  if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`${safeUrl(url)} → HTTP ${res.status}`);
   const text = await res.text();
   return JSON.parse(stripJsonGuard(text)) as T;
 }
 
 export async function fetchText(url: string, opts?: FetchOpts): Promise<string> {
   const res = await httpFetch(url, opts);
-  if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`${safeUrl(url)} → HTTP ${res.status}`);
   return res.text();
 }

@@ -20,6 +20,9 @@ export interface SourceContract {
   fetch(): Promise<RawListing[]>;
 }
 
+/** A source is "paid" (tier 2+) if it hits a metered/managed API — gated out of a plain `ingest`. */
+export const isPaid = (s: { tier: number }): boolean => s.tier >= 2;
+
 export interface SourceCtx {
   log: Logger;
 }

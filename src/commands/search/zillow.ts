@@ -2,6 +2,7 @@ import { z } from "zod";
 import { defineSource } from "../../source.ts";
 import { envSpec } from "../../env/spec.ts";
 import { fetchJson } from "../../core/http.ts";
+import { facet } from "../../core/facet.ts";
 import type { RawListing } from "../../core/types.ts";
 
 // Zillow — the dominant SF rental portal, otherwise behind PerimeterX/HUMAN.
@@ -55,7 +56,7 @@ export default defineSource({
       const url =
         `https://${HOST}/propertyExtendedSearch` +
         `?location=${encodeURIComponent(env.ZILLOW_LOCATION)}&status_type=ForRent&page=${page}`;
-      const data = await fetchJson<ZResponse>(url, { headers });
+      const data = await fetchJson<ZResponse>(url, { headers, retries: 0 }); // paid API — never retry
       const props = data.props ?? [];
       if (props.length === 0) break;
       for (const p of props) {
@@ -82,7 +83,7 @@ function map(p: ZProp): RawListing {
     url,
     title: p.address ?? null,
     address: p.address ?? null,
-    city: "San Francisco",
+    city: null, // the address string already carries the real city; don't hardcode
     lat: p.latitude ?? null,
     lon: p.longitude ?? null,
     price: typeof p.price === "number" ? p.price : null,
@@ -91,15 +92,13 @@ function map(p: ZProp): RawListing {
     sqft: p.livingArea ?? null,
     propertyType: p.propertyType ?? null,
     changeTag: `${p.price ?? ""}|${p.listingStatus ?? ""}`,
-    // Mirror zumper's raw shape so `find`'s range/amenity queries work uniformly.
-    raw: {
+    raw: facet({
       minBeds: p.bedrooms ?? null,
       maxBeds: p.bedrooms ?? null,
       minBaths: p.bathrooms ?? null,
       maxBaths: p.bathrooms ?? null,
       minPrice: p.price ?? null,
       maxPrice: p.price ?? null,
-      amenities: "",
-    },
+    }),
   };
 }

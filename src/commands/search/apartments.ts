@@ -2,6 +2,7 @@ import { z } from "zod";
 import { defineSource } from "../../source.ts";
 import { envSpec } from "../../env/spec.ts";
 import { httpFetch, stripJsonGuard } from "../../core/http.ts";
+import { facet } from "../../core/facet.ts";
 import type { RawListing } from "../../core/types.ts";
 
 // Apartments.com (CoStar) — the biggest UNIQUE SF multifamily inventory, behind
@@ -40,10 +41,16 @@ export default defineSource({
     ),
   },
   async fetch(env): Promise<RawListing[]> {
-    const url = `https://api.apify.com/v2/acts/${ACTOR}/run-sync-get-dataset-items?token=${encodeURIComponent(env.APIFY_TOKEN)}`;
+    // Token goes in the Authorization header, NOT the URL query (Apify's own advice —
+    // URLs land in logs/history; core/http.ts also redacts query strings just in case).
+    const url = `https://api.apify.com/v2/acts/${ACTOR}/run-sync-get-dataset-items`;
     const res = await httpFetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        authorization: `Bearer ${env.APIFY_TOKEN}`,
+      },
       body: JSON.stringify({
         action: "search",
         startUrls: [{ url: SEARCH_URL }],
@@ -54,8 +61,7 @@ export default defineSource({
       timeoutMs: 290_000, // run-sync can take minutes
       retries: 0, // never re-run a paid actor
     });
-    if (!res.ok)
-      throw new Error(`apify apartments → HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    if (!res.ok) throw new Error(`apify apartments → HTTP ${res.status}`);
     const items = JSON.parse(stripJsonGuard(await res.text())) as ApItem[];
     return (Array.isArray(items) ? items : []).map(map);
   },
@@ -70,11 +76,9 @@ function map(it: ApItem): RawListing {
   const maxBeds = beds.length ? Math.max(...beds) : null;
   const minBaths = baths.length ? Math.min(...baths) : null;
   const maxBaths = baths.length ? Math.max(...baths) : null;
-  const amenities = Object.values(it.amenities ?? {})
-    .flat()
-    .filter((x) => typeof x === "string")
-    .join(" ")
-    .toLowerCase();
+  // Shape-robust: capture amenity keys AND values at any nesting, regardless of
+  // whether the actor returns category→string[] or name→bool. (Matches zumper.amenityText.)
+  const amenities = JSON.stringify(it.amenities ?? {}).toLowerCase();
   return {
     sourceId: it.url || it.address?.full || (it.name ?? "unknown"),
     url: it.url || SEARCH_URL,
@@ -90,8 +94,7 @@ function map(it: ApItem): RawListing {
     sqft: sqfts.length ? Math.min(...sqfts) : null,
     propertyType: "apartments-com",
     changeTag: `${it.pricing?.min ?? ""}|${it.pricing?.max ?? ""}`,
-    // Same raw shape as zumper so `find`'s range/amenity queries work uniformly.
-    raw: {
+    raw: facet({
       buildingName: it.name ?? null,
       minBeds,
       maxBeds,
@@ -100,6 +103,6 @@ function map(it: ApItem): RawListing {
       minPrice: it.pricing?.min ?? null,
       maxPrice: it.pricing?.max ?? null,
       amenities,
-    },
+    }),
   };
 }

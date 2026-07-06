@@ -2,6 +2,7 @@ import { z } from "zod";
 import { defineSource } from "../../source.ts";
 import { envSpec } from "../../env/spec.ts";
 import { httpFetch, stripJsonGuard } from "../../core/http.ts";
+import { facet } from "../../core/facet.ts";
 import type { RawListing } from "../../core/types.ts";
 
 // Zumper internal listables API (SF-HQ, light anti-bot: Fastly, no DataDome).
@@ -105,9 +106,8 @@ function map(l: Listable): RawListing {
     propertyType: l.property_type ?? null,
     postedAt: l.listed_on ? l.listed_on * 1000 : null,
     changeTag: `${l.min_price ?? ""}|${l.listing_status ?? ""}|${l.modified_on ?? ""}`,
-    raw: {
+    raw: facet({
       buildingName: l.building_name ?? null,
-      status: l.listing_status ?? null,
       minBeds: l.min_bedrooms ?? null,
       maxBeds: l.max_bedrooms ?? null,
       minBaths: l.min_bathrooms ?? null,
@@ -115,6 +115,6 @@ function map(l: Listable): RawListing {
       minPrice: l.min_price ?? null,
       maxPrice: l.max_price ?? null,
       amenities: amenityText(l),
-    },
+    }),
   };
 }
