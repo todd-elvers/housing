@@ -64,6 +64,10 @@ run = "scripts/keygen.sh"
 description = "Add/update ONE secret in .env.age, fully in memory (no plaintext on disk). Usage: mise run secrets:set -- KEY"
 run = "scripts/set-secret.sh"
 
+[tasks."secrets:unset"]
+description = "Remove ONE secret from .env.age, fully in memory (no plaintext on disk). Usage: mise run secrets:unset -- KEY"
+run = "scripts/unset-secret.sh"
+
 [tasks."secrets:decrypt"]
 description = "Print decrypted secrets to STDOUT (never writes a file). Pipe it, e.g. `mise run secrets:decrypt | grep KEY`"
 run = 'age --decrypt -i "$HOME/.age/key.txt" .env.age'

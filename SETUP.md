@@ -116,8 +116,9 @@ mise run secrets:keygen        # writes ~/.age/key.txt, prints your age1... publ
 **Add or change a secret** (in memory — no plaintext on disk; preferred):
 
 ```sh
-mise run secrets:set -- RENTCAST_API_KEY   # hidden prompt, re-encrypts .env.age for all recipients
-git add .env.age && git commit             # commit the encrypted file
+mise run secrets:set -- RENTCAST_API_KEY     # add/update: hidden prompt, re-encrypts .env.age
+mise run secrets:unset -- RENTCAST_API_KEY   # remove a secret (also fully in memory)
+git add .env.age && git commit               # commit the encrypted file
 ```
 
 Other tasks: `mise run secrets:decrypt` prints the secrets to stdout (pipe it — never
