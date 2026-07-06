@@ -1,27 +1,16 @@
-import { isRequired, EnvError, type EnvDecl } from "./env/spec.ts";
+import { EnvError } from "./env/spec.ts";
 import { log } from "./core/log.ts";
 
-/** Fold summary / when / examples / required-env into the citty command description shown in --help. */
-export function renderDescription(def: {
-  summary: string;
-  when: string;
-  examples?: string[];
-  requires?: EnvDecl;
-}): string {
-  const lines = [def.summary, "", `When: ${def.when}`];
-  if (def.examples?.length) {
-    lines.push("", "Examples:");
-    for (const e of def.examples) lines.push(`  ${e}`);
-  }
-  if (def.requires && Object.keys(def.requires).length) {
-    lines.push("", "Required env:");
-    for (const [key, spec] of Object.entries(def.requires)) {
-      const opt = isRequired(spec) ? "" : " (optional)";
-      const where = spec.getAt ? ` — ${spec.getAt}` : "";
-      lines.push(`  ${key}${opt}: ${spec.description}${where}`);
-    }
-  }
-  return lines.join("\n");
+/**
+ * citty prints this string BOTH in a parent's COMMANDS list (once per subcommand)
+ * AND at the top of the command's own --help. Keep it to ONE line so the command
+ * tree stays readable — a multi-line description gets dumped verbatim into the
+ * parent list. The full metadata (when / args / required-env / examples) lives in
+ * `housing introspect --json`, is surfaced by `sources`, and is printed by the
+ * fail-fast env error when a command actually needs a missing key.
+ */
+export function renderDescription(def: { summary: string }): string {
+  return def.summary;
 }
 
 /** Emit a structured failure and exit non-zero. Under --json prints {error,code,hint}; otherwise a readable message. */
