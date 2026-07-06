@@ -7,16 +7,20 @@ import { join } from "node:path";
 const AGE_IDENTITY = join(homedir(), ".age", "key.txt");
 
 /**
- * Populate process.env from, in precedence order (first-set wins):
- *   1. the real environment,
- *   2. `.env`      — plaintext, gitignored (local overrides / working copy),
- *   3. `.env.age`  — age-encrypted, committed; decrypted IN MEMORY with your
- *                    ~/.age/key.txt so a fresh clone works without any setup step.
- * All layers are non-override, so a value never clobbers one set earlier.
+ * Populate process.env in precedence order (highest first; each layer only fills
+ * vars not already set, so a higher layer never clobbers a lower one):
+ *   1. the real shell environment       — always wins,
+ *   2. `.env.local`  — plaintext, gitignored: YOUR personal secrets/overrides
+ *                      (e.g. a personal PUSHOVER_TOKEN you don't want to share),
+ *   3. `.env`        — plaintext, gitignored: local working copy,
+ *   4. `.env.age`    — age-encrypted, COMMITTED shared team secrets; decrypted IN
+ *                      MEMORY with ~/.age/key.txt so a fresh clone just works.
  */
-export function loadEnv(path = ".env", agePath = ".env.age"): void {
-  if (existsSync(path)) merge(parseEnv(readFileSync(path, "utf8")) as Record<string, string>);
-  const decrypted = decryptAge(agePath);
+export function loadEnv(): void {
+  for (const path of [".env.local", ".env"]) {
+    if (existsSync(path)) merge(parseEnv(readFileSync(path, "utf8")) as Record<string, string>);
+  }
+  const decrypted = decryptAge(".env.age");
   if (decrypted) merge(decrypted);
 }
 

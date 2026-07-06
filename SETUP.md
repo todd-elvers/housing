@@ -106,6 +106,12 @@ Secrets are committed **encrypted** as `.env.age` and decrypted **in memory at
 startup** — the plaintext never touches disk. Anyone whose age public key is in
 `.age.public-keys` can clone the repo and run it immediately; no manual `.env` setup.
 
+**Personal vs shared.** `.env.age` is the *shared* team baseline. For a secret you
+DON'T want to share (your own `PUSHOVER_TOKEN`, a machine-specific override), put it
+in **`.env.local`** — a gitignored plaintext file that overrides `.env.age`. Load
+precedence, highest first: **shell env → `.env.local` → `.env` → `.env.age`**. So
+`echo 'PUSHOVER_TOKEN=...' >> .env.local` keeps your token local and never committed.
+
 **First time on a machine** — generate your key and get added as a recipient:
 
 ```sh

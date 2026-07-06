@@ -2,9 +2,10 @@
 node_modules/
 .venv/
 
-# local config / secrets — plaintext .env stays local; the age-encrypted
-# .env.age and the .age.public-keys recipients list ARE committed.
+# local config / secrets — plaintext .env / .env.local stay local; the
+# age-encrypted .env.age and the public .age.public-keys ARE committed.
 .env
+.env.local
 !.env.age
 !.age.public-keys
 
