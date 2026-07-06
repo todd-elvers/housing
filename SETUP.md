@@ -100,6 +100,12 @@ Set `PUSHOVER_TOKEN` (app token from <https://pushover.net/apps/build>) and
 `PUSHOVER_USER`. When both are set, any `ingest` that produces changes sends a push.
 Unset → stdout digest + `housing.log` only.
 
+> ⚠️ **Unpolished — expect noise.** There's no criteria filtering yet, so every
+> genuinely-new listing counts as an event. A scheduled `ingest` (especially
+> Craigslist's whole-Bay-Area feed) will push often, with large counts. This needs
+> refinement — add price/beds/location filtering so only listings you care about
+> trigger a push — before relying on it for real alerts.
+
 ### Sharing secrets with the team (age-encrypted)
 
 Secrets are committed **encrypted** as `.env.age` and decrypted **in memory at
