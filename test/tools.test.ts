@@ -21,6 +21,8 @@ import { loadSources, type SourceContract } from "../src/source.ts";
 const MAIN = fileURLToPath(new URL("../src/main.ts", import.meta.url));
 const COMMANDS_DIR = fileURLToPath(new URL("../src/commands/", import.meta.url));
 const LIVE = process.env.HOUSING_TEST_LIVE !== "0";
+// Tier-2 sources hit paid/managed APIs — never live-fetch them unless explicitly opted in.
+const PAID = process.env.HOUSING_TEST_PAID === "1";
 const TEST_DB = join(tmpdir(), "housing-integration-test.db");
 
 /** Run the real CLI entrypoint through the toolchain and capture its result. */
@@ -119,8 +121,8 @@ test("cli: entrypoint, help, and the introspect manifest work", async (t) => {
   );
 
   // A full ingest against a throwaway DB proves the mutation pipeline end-to-end
-  // (fresh seed ⇒ 0 events ⇒ no notification side effects).
-  const enabled = sources.find((s) => s.enabled().ok);
+  // (fresh seed ⇒ 0 events ⇒ no notification side effects). Use a free tier-1 source.
+  const enabled = sources.find((s) => s.enabled().ok && s.tier === 1);
   await t.test(
     enabled
       ? `ingest --source ${enabled.name} runs end-to-end`
@@ -152,6 +154,10 @@ test("sources: each one fetches (enabled) or fails fast (disabled)", async (t) =
       }
       if (!LIVE) {
         tt.skip("HOUSING_TEST_LIVE=0");
+        return;
+      }
+      if (s.tier >= 2 && !PAID) {
+        tt.skip("tier-2 paid source — set HOUSING_TEST_PAID=1 to live-fetch");
         return;
       }
       const listings = await s.fetch();

@@ -82,9 +82,14 @@ render of the same, regenerated with `./housing introspect --format agents`.
 Edit `.env` (created by bootstrap; it's gitignored). Each block is independent;
 `./housing sources` tells you exactly which var is missing and where to get it.
 
+Tier-1 (free):
 - **rentcast** — `RENTCAST_API_KEY` from <https://app.rentcast.io> (free tier 50 req/mo).
 - **reddit** — `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` from a "script" app at <https://www.reddit.com/prefs/apps>.
 - **homeharvest** — set `HOUSING_HOMEHARVEST=1` (Python bridge; `uv sync` ran during bootstrap).
+
+Tier-2 (paid/managed anti-bot — **these cost money per call**, so a plain `ingest` skips them; run `ingest --paid` or `ingest --source <name>`):
+- **zillow** — `RAPIDAPI_KEY` from the [zillow-com1](https://rapidapi.com/apimaker/api/zillow-com1) RapidAPI listing (freemium). The dominant SF portal, unit-level beds/baths.
+- **apartments** — `APIFY_TOKEN` from <https://console.apify.com/account/integrations> (~$2/1k results). Apartments.com multifamily via the `pro100chok/apartments-scraper-usage` actor.
 
 `.env.example` lists every variable with a description and where to obtain it. It's
 generated — regenerate after adding a tool with `./housing introspect --format env-example > .env.example`.
@@ -149,7 +154,12 @@ Worked example (a real source): [`src/commands/search/rentcast.ts`](./src/comman
 ```sh
 mise run test                     # exercises every command + source
 HOUSING_TEST_LIVE=0 mise run test # skip network (contract + wiring only; ~1s, CI-safe)
+HOUSING_TEST_PAID=1 mise run test # also live-fetch tier-2 paid sources (spends API credits)
 ```
+
+Tier-2 (paid) sources are **never live-fetched by default** — the test only verifies
+their wiring (contract + disabled/enabled), so a normal test run never spends money.
+Set `HOUSING_TEST_PAID=1` to actually exercise them.
 
 `test/tools.test.ts` is **self-maintaining** — it discovers commands + sources the
 same way the CLI does (`loadCommands` / `loadSources` / `introspect`), so a new tool

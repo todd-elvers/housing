@@ -32,7 +32,12 @@ Everything is discoverable — you never need to read the source to know what ex
 | `housing search <name>` | Run a single source and return its listings (`--json` for full output) |
 | `housing introspect [--format json\|env-example\|agents]` | Machine-readable manifest; also regenerates `.env.example` / `AGENTS.md` |
 
-Rental sources (under `housing search`): `craigslist`, `redfin`, `dahlia`, `zumper`, `rentsfnow`, `rentcast`, `reddit`, `homeharvest`. Five run with no config; the rest need a key (see `housing sources`).
+Rental sources (under `housing search`):
+
+- **Tier 1 (free/direct)** — `craigslist`, `redfin`, `dahlia`, `zumper`, `rentsfnow`, `rentcast`, `reddit`, `homeharvest`. Run by a plain `ingest`. Five need no config; the rest need a free key.
+- **Tier 2 (paid/managed anti-bot)** — `zillow` (RapidAPI), `apartments` (Apify Apartments.com). These cost money per call, so a plain `ingest` **skips** them; run with `ingest --paid` or `ingest --source zillow`.
+
+`housing sources` shows each source's tier + whether it's enabled.
 
 ## Adding a tool (the whole point)
 

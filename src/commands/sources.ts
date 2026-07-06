@@ -14,15 +14,20 @@ export default defineTool({
       const state = s.enabled();
       const mark = state.ok ? "●" : "○";
       const snap = s.snapshotComplete ? "snapshot" : "feed    ";
+      const tier = s.tier >= 2 ? " ⚠paid" : "      ";
       const note = state.ok ? "enabled" : `disabled — ${state.reason}`;
-      log.print(`  ${mark} ${s.name.padEnd(12)} [${snap}]  ${note}`);
+      log.print(`  ${mark} ${s.name.padEnd(12)} [${snap}]${tier}  ${note}`);
     }
     log.print("\n  ● enabled   ○ disabled (needs config)");
     log.print("  snapshot = absence ⇒ removed · feed = new-only, no removal inference");
+    log.print(
+      "  ⚠paid = tier-2 (managed anti-bot / paid API) — run via `ingest --paid` or `ingest --source <name>`",
+    );
     return sources.map((s) => ({
       name: s.name,
       enabled: s.enabled().ok,
       snapshotComplete: s.snapshotComplete,
+      tier: s.tier,
     }));
   },
 });

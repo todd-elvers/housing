@@ -14,6 +14,8 @@ export interface SourceContract {
   name: string;
   snapshotComplete: boolean;
   order: number;
+  /** 1 = free/direct (run by default). 2 = paid/managed anti-bot (opt-in via ingest --paid). */
+  tier: number;
   enabled(): { ok: true } | { ok: false; reason: string };
   fetch(): Promise<RawListing[]>;
 }
@@ -36,6 +38,8 @@ export function defineSource<E extends EnvDecl = Record<never, never>>(def: {
   snapshotComplete: boolean;
   /** ingest run order; lower first, ties alphabetical. Default 100. */
   order?: number;
+  /** 1 = free/direct (default). 2 = paid/managed anti-bot — skipped by a plain `ingest`. */
+  tier?: number;
   requires?: E;
   fetch(env: EnvValues<E>, ctx: SourceCtx): Promise<RawListing[]>;
 }): CommandDef {
@@ -58,6 +62,7 @@ export function defineSource<E extends EnvDecl = Record<never, never>>(def: {
     name: def.name,
     snapshotComplete: def.snapshotComplete,
     order: def.order ?? 100,
+    tier: def.tier ?? 1,
     enabled: () => (def.requires ? checkEnv(def.requires) : { ok: true }),
     fetch: () =>
       def.fetch((def.requires ? validateEnv(def.requires) : {}) as EnvValues<E>, { log }),

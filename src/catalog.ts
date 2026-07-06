@@ -28,7 +28,7 @@ export interface CatalogNode {
   args?: CatalogArg[];
   inputJsonSchema?: unknown;
   requires?: CatalogEnv[];
-  source?: { snapshotComplete: boolean };
+  source?: { snapshotComplete: boolean; tier: number };
   children?: CatalogNode[];
 }
 
@@ -62,7 +62,7 @@ export async function buildCatalog(
     }
     if (def.requires) node.requires = describeEnv(def.requires);
   }
-  if (source) node.source = { snapshotComplete: source.snapshotComplete };
+  if (source) node.source = { snapshotComplete: source.snapshotComplete, tier: source.tier };
   if (sub) {
     node.children = [];
     for (const [name, child] of Object.entries(sub)) {
