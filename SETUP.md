@@ -100,6 +100,33 @@ Set `PUSHOVER_TOKEN` (app token from <https://pushover.net/apps/build>) and
 `PUSHOVER_USER`. When both are set, any `ingest` that produces changes sends a push.
 Unset → stdout digest + `housing.log` only.
 
+### Sharing secrets with the team (age-encrypted)
+
+Secrets are committed **encrypted** as `.env.age` and decrypted **in memory at
+startup** — the plaintext never touches disk. Anyone whose age public key is in
+`.age.public-keys` can clone the repo and run it immediately; no manual `.env` setup.
+
+**First time on a machine** — generate your key and get added as a recipient:
+
+```sh
+mise run secrets:keygen        # writes ~/.age/key.txt, prints your age1... public key
+# send that public key to a maintainer; they add it to .age.public-keys and re-encrypt
+```
+
+**Add or change a secret** (in memory — no plaintext on disk; preferred):
+
+```sh
+mise run secrets:set -- RENTCAST_API_KEY   # hidden prompt, re-encrypts .env.age for all recipients
+git add .env.age && git commit             # commit the encrypted file
+```
+
+Other tasks: `mise run secrets:decrypt` prints the secrets to stdout (pipe it — never
+writes a file); `mise run secrets:encrypt` bulk-encrypts an existing plaintext `.env`
+(then `rm .env`). `~/.age/key.txt` is your private key — **never commit it**; only the
+encrypted `.env.age` and the public `.age.public-keys` are committed (`.env` is gitignored).
+
+Requires the `age` CLI, which mise installs (`mise install`).
+
 ---
 
 ## 6. Add a tool (the whole point)

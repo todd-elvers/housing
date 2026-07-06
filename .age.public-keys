@@ -1,0 +1,15 @@
+#
+# Age public keys allowed to decrypt this project's secrets (.env.age), one per line.
+# To add a teammate: append their `age1...` public key + a `# Name` comment, then
+# re-encrypt with `mise run secrets:edit` so the new recipient can decrypt.
+# Generate your own key with `mise run secrets:keygen`.
+#
+
+# Todd
+age1emw2e5x3d4cu0x4g0q4lrw8nj2fdv0qfzta6g62m5y24j02zu44sflkxln
+
+# John
+age1ase59dknkacq26gemrs9dvwvu8xr8akhfya99lagv5py7c7h7plsmtucvv
+
+# Conner
+age13zs054me9k5h4m8u3hwqw9nz4jg6lkpfmkzqn8mdujjqp76h6plsmlmtpy

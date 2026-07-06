@@ -64,7 +64,7 @@ src/
 
 - **Engine:** TypeScript run via `tsx` (no build step), `node:sqlite` storage. Each run diffs sources → `new`/`changed`/`removed` events, notifies via Pushover if `PUSHOVER_TOKEN`/`PUSHOVER_USER` are set.
 - **Discoverability:** [citty](https://github.com/unjs/citty) (recursive help) + [zod](https://zod.dev) v4 (one schema drives args, validation, help, and the `--json` manifest).
-- **Env:** secrets load from a gitignored `.env`; each command declares the vars it needs and fails fast (which var + where to get it) before doing any work.
+- **Env:** secrets load from a gitignored `.env`; each command declares the vars it needs and fails fast (which var + where to get it) before doing any work. Team secrets are committed **encrypted** as `.env.age` (age) and decrypted in memory at startup — never to disk (`mise run secrets:set -- KEY`; see [SETUP.md](./SETUP.md)).
 - **Toolchain:** [`mise`](https://mise.jdx.dev) pins node/aube/python/uv (exact versions in `mise.lock`); [`aube`](https://github.com/jdx/aube) is the package manager, with a **7-day dependency cooldown** (`.npmrc` `minimumReleaseAge`) so freshly-published packages can't slip in.
 - **Logs:** every run dual-writes to stdout and `./housing.log` (truncated each run, timestamped). `--verbose` for debug detail; the file always has full detail.
 

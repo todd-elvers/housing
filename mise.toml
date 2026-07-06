@@ -7,6 +7,7 @@ node = "22"
 "github:jdx/aube" = "1.25.1"   # fast Node package manager (jdx) — replaces pnpm; reads/writes pnpm-lock.yaml in place
 python = "3.12"
 uv = "latest"
+age = "1.3.1"   # secrets: decrypt the committed .env.age at startup with your ~/.age/key.txt
 
 [settings]
 # Pin exact resolved tool versions in mise.lock so every machine installs identical versions.
@@ -20,7 +21,9 @@ NODE_OPTIONS = "--disable-warning=ExperimentalWarning"
 description = "Install tool versions + JS/Python deps (one-shot setup from a clean clone)"
 run = [
   "mise install",
-  "test -f .env || cp .env.example .env",
+  # Only scaffold a plaintext .env when there are no committed encrypted secrets;
+  # if .env.age exists it's decrypted in memory at startup (needs your age key).
+  "test -f .env || test -f .env.age || cp .env.example .env",
   "mise exec -- aube install",
   "mise exec -- uv sync",
 ]
@@ -52,3 +55,19 @@ run = ["mise run format", "mise run lint", "mise run typecheck"]
 [tasks.db]
 description = "Open the SQLite DB in the sqlite3 shell"
 run = "sqlite3 data/housing.db"
+
+[tasks."secrets:keygen"]
+description = "Generate your age identity (~/.age/key.txt) and print your public key for .age.public-keys"
+run = "scripts/keygen.sh"
+
+[tasks."secrets:set"]
+description = "Add/update ONE secret in .env.age, fully in memory (no plaintext on disk). Usage: mise run secrets:set -- KEY"
+run = "scripts/set-secret.sh"
+
+[tasks."secrets:decrypt"]
+description = "Print decrypted secrets to STDOUT (never writes a file). Pipe it, e.g. `mise run secrets:decrypt | grep KEY`"
+run = 'age --decrypt -i "$HOME/.age/key.txt" .env.age'
+
+[tasks."secrets:encrypt"]
+description = "Bulk: encrypt an existing plaintext .env → .env.age (delete .env after; prefer secrets:set to avoid plaintext on disk)"
+run = 'age --encrypt -R .age.public-keys -o .env.age .env && echo "Encrypted .env → .env.age (commit it; then: rm .env)"'

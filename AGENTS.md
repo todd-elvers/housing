@@ -12,8 +12,8 @@ Search the ingested rental DB by beds/baths/price/keyword and rank results by di
 - **Env:** HOUSING_DB
 
 ## `housing ingest`  _(mutation)_
-Fetch all enabled sources, diff against the DB, and notify on new/changed/removed listings.
-- **When:** Run on a schedule (or by hand) to refresh the SF rental database and surface what changed since last run.
+Fetch enabled sources (free tier-1 by default; --paid adds tier-2), diff against the DB, and notify on new/changed/removed listings.
+- **When:** Run on a schedule (or by hand) to refresh the SF rental database and surface what changed. Plain runs stay free; add --paid (or --source <name>) to include tier-2 paid sources.
 - **Args:** --source, --paid
 - **Env:** HOUSING_DB, PUSHOVER_TOKEN, PUSHOVER_USER
 
