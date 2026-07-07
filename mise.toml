@@ -33,8 +33,12 @@ description = "Run the housing CLI. Forward args after `--`:  mise run housing -
 run = "aube exec tsx src/main.ts"
 
 [tasks.test]
-description = "Self-discovering integration test: exercises every command + source (HOUSING_TEST_LIVE=0 to skip network)"
+description = "Self-discovering integration test (FREE sources only — never bills a paid API; HOUSING_TEST_LIVE=0 to skip network)"
 run = "aube exec tsx --test test/tools.test.ts"
+
+[tasks."test:paid"]
+description = "DELIBERATE paid-API integration test — spends money (RapidAPI Zillow + Apify Apartments). Excluded from `mise run test`."
+run = "HOUSING_TEST_PAID=1 aube exec tsx --test test/paid.test.ts"
 
 [tasks.format]
 description = "Format src/ + test/ with oxfmt"

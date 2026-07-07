@@ -21,9 +21,11 @@ import { loadSources, isPaid, type SourceContract } from "../src/source.ts";
 const MAIN = fileURLToPath(new URL("../src/main.ts", import.meta.url));
 const COMMANDS_DIR = fileURLToPath(new URL("../src/commands/", import.meta.url));
 const LIVE = process.env.HOUSING_TEST_LIVE !== "0";
-// Tier-2 sources hit paid/managed APIs — never live-fetch them unless explicitly opted in.
-const PAID = process.env.HOUSING_TEST_PAID === "1";
 const TEST_DB = join(tmpdir(), "housing-integration-test.db");
+
+// This suite NEVER live-fetches a paid (tier-2) source — spending money must be a
+// deliberate act, so those live behind their own `mise run test:paid` (test/paid.test.ts)
+// and are unconditionally skipped here. There is no env flag to opt them in from this file.
 
 /** Run the real CLI entrypoint through the toolchain and capture its result. */
 function runCli(args: string[]) {
@@ -156,8 +158,8 @@ test("sources: each one fetches (enabled) or fails fast (disabled)", async (t) =
         tt.skip("HOUSING_TEST_LIVE=0");
         return;
       }
-      if (isPaid(s) && !PAID) {
-        tt.skip("tier-2 paid source — set HOUSING_TEST_PAID=1 to live-fetch");
+      if (isPaid(s)) {
+        tt.skip("tier-2 paid source — covered by `mise run test:paid` (test/paid.test.ts)");
         return;
       }
       const listings = await s.fetch();

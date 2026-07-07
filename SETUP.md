@@ -88,7 +88,7 @@ Tier-1 (free):
 - **homeharvest** — set `HOUSING_HOMEHARVEST=1` (Python bridge; `uv sync` ran during bootstrap).
 
 Tier-2 (paid/managed anti-bot — **these cost money per call**, so a plain `ingest` skips them; run `ingest --paid` or `ingest --source <name>`):
-- **zillow** — `RAPIDAPI_KEY` from the [zillow-com1](https://rapidapi.com/apimaker/api/zillow-com1) RapidAPI listing (freemium). The dominant SF portal, unit-level beds/baths.
+- **zillow** — `RAPIDAPI_KEY` subscribed to the [zillow-property-data1](https://rapidapi.com/search/zillow-property-data1) RapidAPI API (async bulk scraper: `POST /v1/properties` → poll `/v1/results/{job_id}`). Deep per-property Zillow data (price, beds/baths, rent + sale zestimates, price/tax history, images) by `--search`/`--zipcodes`/`--zpids`/`--addresses`/`--urls`.
 - **apartments** — `APIFY_TOKEN` from <https://console.apify.com/account/integrations> (~$2/1k results). Apartments.com multifamily via the `pro100chok/apartments-scraper-usage` actor.
 
 `.env.example` lists every variable with a description and where to obtain it. It's
@@ -192,14 +192,20 @@ Worked example (a real source): [`src/commands/search/rentcast.ts`](./src/comman
 ## 7. Testing
 
 ```sh
-mise run test                     # exercises every command + source
+mise run test                     # FREE sources only — never bills a paid API
 HOUSING_TEST_LIVE=0 mise run test # skip network (contract + wiring only; ~1s, CI-safe)
-HOUSING_TEST_PAID=1 mise run test # also live-fetch tier-2 paid sources (spends API credits)
+mise run test:paid                # DELIBERATE: live-fetch the tier-2 PAID sources (spends money)
 ```
 
-Tier-2 (paid) sources are **never live-fetched by default** — the test only verifies
-their wiring (contract + disabled/enabled), so a normal test run never spends money.
-Set `HOUSING_TEST_PAID=1` to actually exercise them.
+Spending money is a **deliberate act**, so the two suites are split:
+
+- **`mise run test`** (`test/tools.test.ts`) is **structurally incapable** of billing a
+  paid API — tier-2 sources are unconditionally skipped, and there is *no* env flag to
+  opt them in from this suite. It only verifies their wiring (contract + enabled/disabled).
+- **`mise run test:paid`** (`test/paid.test.ts`) is the only path that live-fetches the
+  paid sources (RapidAPI Zillow, Apify Apartments). It self-gates behind `HOUSING_TEST_PAID=1`
+  (set for you by the mise task), so an accidental `tsx --test` over `test/` can't spend a cent.
+  It keeps each call small (a few items, one page) and asserts real enriched data comes back.
 
 `test/tools.test.ts` is **self-maintaining** — it discovers commands + sources the
 same way the CLI does (`loadCommands` / `loadSources` / `introspect`), so a new tool
@@ -207,7 +213,7 @@ is picked up and exercised with **no test changes**. It checks, generically:
 every tool is well-formed (summary/when/kind, valid args + env) and in the manifest;
 `--help`, `introspect --json`, and `sources` run; a disabled source fails fast with a
 structured `env_missing` error; a full `ingest` runs against a throwaway DB; and each
-enabled source actually fetches and returns valid listings (`sourceId` + http `url`).
+enabled **free** source actually fetches and returns valid listings (`sourceId` + http `url`).
 Live fetches are on by default (real proof); `HOUSING_TEST_LIVE=0` runs only the
 offline tiers.
 
@@ -246,7 +252,8 @@ src/
   env/dotenv.ts spec.ts .env loader; per-command typed env validation
   core/                 engine: db, http, normalize, notify, log, run, types
   commands/             >>> add files here <<<  ingest.ts sources.ts introspect.ts + search/*.ts
-test/tools.test.ts      self-discovering integration test (exercises every command + source)
+test/tools.test.ts      self-discovering integration test (FREE sources; never bills a paid API)
+test/paid.test.ts       deliberate PAID-API suite (`mise run test:paid`; live Zillow + Apartments)
 scripts/homeharvest_fetch.py   Python bridge (uv)
 ```
 

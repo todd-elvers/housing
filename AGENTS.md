@@ -23,60 +23,73 @@ Emit the full command catalog (the machine-readable tool manifest for LLMs), or 
 - **Args:** --path, --format*
 
 ## `housing search apartments`  _(query)_
-Apartments.com (CoStar) via Apify — the biggest unique SF multifamily inventory (buildings + floor plans).
-- **When:** Use for broad multifamily coverage the free portals miss. Paid (~$2/1k via Apify) and slow (managed anti-bot).
-- **Env:** APIFY_TOKEN*, APARTMENTS_MAX_ITEMS
+Apartments.com (CoStar) via Apify — the biggest unique SF multifamily inventory (buildings, floor plans, per-unit beds/baths/rent, amenities, walk/transit scores).
+- **When:** Use for broad multifamily coverage the free portals miss, or to deep-scrape specific buildings (--listingUrls). Paid (~$2/1k via Apify) and slow (managed anti-bot, two-step scrape).
+- **Args:** --url, --listingUrls, --maxItems, --maxPages, --concurrency
+- **Env:** APIFY_TOKEN*, APARTMENTS_SEARCH_URL, APARTMENTS_MAX_ITEMS, APARTMENTS_MAX_PAGES
 - **Example:** `housing search apartments`
 
 ## `housing search craigslist`  _(query)_
-Craigslist SF Bay apartments (sapi JSON) — the highest-volume, lowest-latency NEW-listing feed.
-- **When:** Use for the freshest private-landlord/sublet listings across the Bay Area. Requires a residential IP (datacenter IPs are 403'd).
+Craigslist SF Bay apartments/housing (sapi JSON) — the highest-volume, lowest-latency NEW-listing feed; free, no key.
+- **When:** Use for the freshest private-landlord/sublet listings across the Bay Area (up to 360 newest per run). Requires a residential IP (datacenter IPs are 403'd). Pass --minPrice/--maxBeds/--query/etc. for ad-hoc searches; add --no-postedToday to search the full backlog instead of just today.
+- **Args:** --query, --minPrice, --maxPrice, --minBeds, --maxBeds, --minBaths, --maxBaths, --minSqft, --maxSqft, --hasImage, --postedToday, --limit
+- **Env:** CRAIGSLIST_SEARCH_PATH, CRAIGSLIST_QUERY, CRAIGSLIST_POSTED_TODAY, CRAIGSLIST_MAX_LISTINGS
 - **Example:** `housing search craigslist`
 
 ## `housing search dahlia`  _(query)_
-SF DAHLIA affordable/BMR housing portal — the authoritative feed for income-capped lottery rentals.
-- **When:** Use for SF affordable/below-market-rate units; mostly application-gated lottery listings, so skip it for a market-rate hunt.
+SF DAHLIA affordable/BMR housing portal — the authoritative feed for income-capped lottery/waitlist rentals (address, per-unit-type rent/sqft, beds, availability; optional neighborhood/amenity enrichment).
+- **When:** Use for SF affordable/below-market-rate units; mostly application-gated lottery/waitlist listings, so skip it for a market-rate hunt. Pass --enrich to add neighborhood/amenities (one request per listing).
+- **Args:** --type, --minPrice, --maxPrice, --minBeds, --maxBeds, --limit, --enrich
+- **Env:** DAHLIA_TYPE, DAHLIA_LIMIT, DAHLIA_ENRICH
 - **Example:** `housing search dahlia`
 
 ## `housing search homeharvest`  _(query)_
-Realtor.com rentals via the HomeHarvest Python scraper, shelled out through a `uv run` bridge.
-- **When:** Use for Realtor.com/MLS inventory not covered by the JS sources; requires local `uv sync` and HOUSING_HOMEHARVEST=1.
-- **Env:** HOUSING_HOMEHARVEST*, HOMEHARVEST_LOCATION, HOMEHARVEST_PAST_DAYS
+Realtor.com rentals via the HomeHarvest Python scraper, shelled out through a `uv run` bridge. Location/recency/listing-type map upstream; price + bed windows filter locally.
+- **When:** Use for Realtor.com/MLS inventory not covered by the JS sources; requires local `uv sync` and HOUSING_HOMEHARVEST=1. Scrapes a free source, so keep the window small (past-days) to stay gentle.
+- **Args:** --location, --pastDays, --listingType, --minBeds, --maxBeds, --minPrice, --maxPrice, --limit
+- **Env:** HOUSING_HOMEHARVEST*, HOMEHARVEST_LOCATION, HOMEHARVEST_PAST_DAYS, HOMEHARVEST_LISTING_TYPE
 - **Example:** `housing search homeharvest`
 
 ## `housing search reddit`  _(query)_
-Reddit OAuth search across SF housing subs — NEW-lead intel on private-landlord/sublet posts, not structured listings.
-- **When:** Use to surface off-market leads (private landlords, sublets) posted to r/sanfrancisco, r/bayarea, r/AskSF; immutable posts, so new-only. Needs a free Reddit script app.
-- **Env:** REDDIT_CLIENT_ID*, REDDIT_CLIENT_SECRET*, REDDIT_USERNAME, REDDIT_SUBS
+Reddit OAuth search across SF housing subs — NEW-lead intel on private-landlord/sublet posts, not structured listings. Best-effort price/beds/baths pulled from post text.
+- **When:** Use to surface off-market leads (private landlords, sublets) posted to r/sanfrancisco, r/bayarea, r/AskSF; posts are near-immutable so treat as a new-only feed. Needs a free Reddit script app.
+- **Args:** --subs, --query, --sort, --time, --limit
+- **Env:** REDDIT_CLIENT_ID*, REDDIT_CLIENT_SECRET*, REDDIT_USERNAME, REDDIT_SUBS, REDDIT_QUERY, REDDIT_LIMIT
 - **Example:** `housing search reddit`
 
 ## `housing search redfin`  _(query)_
-Redfin Stingray rentals search for SF — a full paginated snapshot of MLS-listed units with status badges.
-- **When:** Use for a complete NEW/REMOVED snapshot of Redfin-listed SF rentals; this variant omits inline price/beds (detail call needed).
-- **Env:** REDFIN_REGION_ID
+Redfin Stingray rentals search for SF — a full paginated snapshot of listed buildings/units with inline rent, beds/baths, sqft and status badges.
+- **When:** Use for a complete NEW/REMOVED/price snapshot of Redfin-listed SF rentals. Filterable by price/beds/baths/type; multi-unit buildings report ranges (low end is the headline).
+- **Args:** --region, --regionType, --minPrice, --maxPrice, --minBeds, --maxBeds, --minBaths, --propertyTypes, --limit
+- **Env:** REDFIN_REGION_ID, REDFIN_REGION_TYPE, REDFIN_MAX_LISTINGS
 - **Example:** `housing search redfin`
 
 ## `housing search rentcast`  _(query)_
-RentCast REST aggregator — the legal Tier-1 backbone with listedDate/status for clean diffs.
-- **When:** Use for a normalized cross-source rental snapshot of SF; misses Craigslist-only / private-landlord units.
-- **Env:** RENTCAST_API_KEY*, RENTCAST_CITY
+RentCast REST aggregator — the legal Tier-1 backbone with listedDate/status for clean diffs. Paginated over the long-term rentals endpoint with exact beds/baths, propertyType, and recency filters.
+- **When:** Use for a normalized cross-source rental snapshot of SF; misses Craigslist-only / private-landlord units. Note beds/baths are EXACT-match filters, and each 500 listings costs one RentCast request.
+- **Args:** --city, --state, --status, --propertyType, --beds, --baths, --daysOld, --minPrice, --maxPrice, --limit
+- **Env:** RENTCAST_API_KEY*, RENTCAST_CITY, RENTCAST_STATE, RENTCAST_STATUS, RENTCAST_LIMIT
 - **Example:** `housing search rentcast`
 
 ## `housing search rentsfnow`  _(query)_
-RentSFNow / Veritas sitemap crawl — the largest single private SF/Oakland portfolio's full unit set + relist/delist changes.
-- **When:** Use for complete coverage of a big private-landlord portfolio (absence ⇒ removed); no price/availability, just the unit URL set + lastmod change tags.
+RentSFNow / Veritas live availability feed — the largest single private SF/Oakland portfolio's currently-listed units with real rent, beds/baths, neighborhood and lat/lon.
+- **When:** Use for real available rentals (with prices) from a big private-landlord portfolio; snapshot-complete (absence ⇒ delisted). Filter with --city/--neighborhood/--min-max beds/baths/price.
+- **Args:** --city, --neighborhood, --minBeds, --maxBeds, --minBaths, --maxBaths, --minPrice, --maxPrice, --maxPages, --limit
+- **Env:** RENTSFNOW_CITY, RENTSFNOW_MAX_PAGES
 - **Example:** `housing search rentsfnow`
 
 ## `housing search zillow`  _(query)_
-Zillow for-rent via the RapidAPI zillow-com1 wrapper — unit-level beds/baths/price for the dominant SF portal.
-- **When:** Use for the broadest SF rental coverage with real per-unit beds/baths. Paid (RapidAPI) — the one portal worth paying to reach.
-- **Env:** RAPIDAPI_KEY*, ZILLOW_LOCATION, ZILLOW_MAX_PAGES
+Zillow property data via the RapidAPI zillow-property-data1 async API — rich per-property detail (price, beds/baths, rent + sale zestimates, price/tax history, images) by search, zipcode, zpid, address, or URL.
+- **When:** Use for the deepest Zillow per-property data or to look up specific homes (--zpids/--addresses/--urls). Paid (RapidAPI). Broad search/zipcode discovery skews FOR_SALE; pass a rentals search URL or type=rent for rentals.
+- **Args:** --search, --zipcodes, --zpids, --addresses, --urls, --type, --maxItems
+- **Env:** RAPIDAPI_KEY*, ZILLOW_SEARCH, ZILLOW_TYPE, ZILLOW_MAX_ITEMS
 - **Example:** `housing search zillow`
 
 ## `housing search zumper`  _(query)_
-Zumper internal listables API — the richest change-detection field set (created/modified/listed_on, previous_price, listing_status).
-- **When:** Use for precise diff tracking of SF portal listings; a single listables call may not return every unit, so don't infer removal.
-- **Env:** ZUMPER_CITY
+Zumper internal listables API — the richest change-detection field set (created/modified/listed_on, previous_price, listing_status), paged over the full city set.
+- **When:** Use for precise diff tracking of SF portal listings; pages the whole city (not just the first ~100). Not guaranteed exhaustive, so don't infer removal.
+- **Args:** --city, --minPrice, --maxPrice, --beds, --minBaths, --maxItems
+- **Env:** ZUMPER_CITY, ZUMPER_MAX_ITEMS
 - **Example:** `housing search zumper`
 
 ## `housing sources`  _(query)_
