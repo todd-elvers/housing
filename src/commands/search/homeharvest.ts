@@ -52,6 +52,7 @@ interface HhRow {
   sqft?: number | null;
   property_type?: string;
   list_date?: string;
+  primary_photo?: string | null;
 }
 
 /** Parse the bridge's naive "YYYY-MM-DD HH:MM:SS" list_date as UTC → epoch ms. */
@@ -267,6 +268,7 @@ function map(r: HhRow): RawListing | null {
       // Extras kept for debugging / later enrichment.
       street,
       listDate: r.list_date ?? null,
+      imageUrl: r.primary_photo ?? null,
     },
   };
 }

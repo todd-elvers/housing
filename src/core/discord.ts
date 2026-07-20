@@ -1,185 +1,189 @@
-import type { ListingEvent } from "./types.ts";
+import { Data, Duration, Effect, Schedule } from "effect";
 
-// Discord incoming-webhook notifier. Renders a run's new/changed/removed events as
-// a single, scannable "sectioned digest": a header embed + one color-coded embed
-// per category, with one field per listing (masked link in the field value —
-// masked links only render inside embeds, never in plain content).
+// Discord incoming-webhook notifier. One message PER eligible listing (not a
+// batched digest), so each can be edited in place later: a listing that changes
+// gets its card updated, and one that's delisted gets its message rewritten to a
+// greyed-out "delisted" state. The message id returned on post is stored by the
+// caller so those edits can target it.
 //
-// Everything here is defensive about Discord's hard limits: it rejects (400) the
-// WHOLE message if any is exceeded — it never truncates for you — and the 6000 is
-// summed across every embed in the message, not per embed. So we pre-truncate and
-// budget-trim before sending. Numbers per docs.discord.com/developers.
+// Operations are Effects. Retries (429 honoring retry_after, plus 5xx) are handled
+// here; the caller trickles them through a RateLimiter to respect the per-webhook
+// rate limit.
+
 const WEBHOOK_USERNAME = "SF Rent Radar";
 
 const COLOR = {
-  header: 0x5865f2, // blurple
   new: 0x57f287, // green
   changed: 0xfaa61a, // amber
-  removed: 0xed4245, // red
+  delisted: 0xed4245, // red
 } as const;
 
-// Discord limits (exact) — we stay comfortably inside them.
-const LIMIT = {
-  title: 256,
-  fieldName: 256,
-  fieldValue: 1024,
-  fieldsPerEmbed: 25,
-  embedsPerMessage: 10,
-  totalChars: 6000,
-} as const;
-const TOTAL_BUDGET = 5500; // leave headroom under the 6000 aggregate
-const MAX_ROWS_PER_CATEGORY = 10; // then collapse the rest into a "+N more" row
+const LIMIT = { title: 256, description: 4096 } as const;
 
-interface EmbedField {
-  name: string;
-  value: string;
-  inline?: boolean;
+interface EmbedImage {
+  url: string;
 }
 interface Embed {
   title?: string;
+  url?: string;
   description?: string;
   color?: number;
   timestamp?: string;
-  fields?: EmbedField[];
-}
-interface WebhookPayload {
-  username: string;
-  allowed_mentions: { parse: [] };
-  embeds: Embed[];
+  image?: EmbedImage;
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** One listing rendered for Discord: its embed content + an optional card PNG. */
+export interface RenderedCard {
+  kind: "new" | "changed";
+  title: string; // e.g. "$3,200/mo · 2Bd/1Ba · Mission"
+  url: string; // listing URL (makes the title clickable)
+  description: string; // commute / change / source line
+  png: Buffer | null; // null → embed posts without an image
+}
+
+/** Minimal listing identity used to render a delisted (removed) message. */
+export interface DelistedInfo {
+  title: string;
+  url: string;
+  source: string;
+}
 
 function trunc(s: string, n: number): string {
   return s.length <= n ? s : `${s.slice(0, n - 1)}…`;
 }
 
-function money(p?: number | null): string {
-  return typeof p === "number" ? `$${p.toLocaleString()}/mo` : "price n/a";
-}
+const FILENAME = "card.png";
 
-/** "2Bd/1Ba", "Studio/1Ba", or "" when neither is known. */
-function bedsBaths(e: ListingEvent): string {
-  const beds = e.beds == null ? null : e.beds === 0 ? "Studio" : `${trimNum(e.beds)}Bd`;
-  const baths = e.baths == null ? null : `${trimNum(e.baths)}Ba`;
-  return [beds, baths].filter(Boolean).join("/");
-}
-const trimNum = (n: number): string => (Number.isInteger(n) ? String(n) : n.toFixed(1));
-
-/** One listing → one embed field. Link goes in the value (names can't hold masked links). */
-function listingField(e: ListingEvent): EmbedField {
-  const head = [money(e.price), bedsBaths(e) || null, e.neighborhood ?? null]
-    .filter(Boolean)
-    .join(" · ");
-  const name = trunc(head || e.title || "listing", LIMIT.fieldName);
-
-  const parts: string[] = [];
-  if (e.type === "removed") parts.push("Delisted");
-  parts.push(`[View listing](${e.url})`);
-  if (e.type === "changed" && e.detail) parts.push(e.detail); // e.g. "price ↓ $3,500 → $3,200"
-  parts.push(`via ${e.source}`);
-  return { name, value: trunc(parts.join(" · "), LIMIT.fieldValue), inline: false };
-}
-
-function categoryEmbed(title: string, color: number, events: ListingEvent[]): Embed | null {
-  if (events.length === 0) return null;
-  const shown = events.slice(0, MAX_ROWS_PER_CATEGORY);
-  const fields = shown.map(listingField);
-  const overflow = events.length - shown.length;
-  if (overflow > 0) {
-    fields.push({
-      name: `+${overflow} more`,
-      value: "…run `housing find` for the full set",
-      inline: false,
-    });
+/** Build the multipart body for a normal (active) listing card. */
+function cardForm(card: RenderedCard): FormData {
+  const embed: Embed = {
+    title: trunc(card.title, LIMIT.title),
+    url: card.url,
+    description: trunc(card.description, LIMIT.description),
+    color: card.kind === "changed" ? COLOR.changed : COLOR.new,
+  };
+  const form = new FormData();
+  const attachments: { id: number; filename: string }[] = [];
+  if (card.png) {
+    form.append("files[0]", new Blob([new Uint8Array(card.png)], { type: "image/png" }), FILENAME);
+    embed.image = { url: `attachment://${FILENAME}` };
+    attachments.push({ id: 0, filename: FILENAME });
   }
-  return { title: trunc(title, LIMIT.title), color, fields: fields.slice(0, LIMIT.fieldsPerEmbed) };
+  form.append(
+    "payload_json",
+    JSON.stringify({
+      username: WEBHOOK_USERNAME,
+      allowed_mentions: { parse: [] }, // scraped text may contain @everyone — never ping
+      embeds: [embed],
+      attachments,
+    }),
+  );
+  return form;
 }
 
-/** Sum the chars Discord counts toward the 6000-per-message aggregate. */
-function embedChars(e: Embed): number {
-  let n = (e.title?.length ?? 0) + (e.description?.length ?? 0);
-  for (const f of e.fields ?? []) n += f.name.length + f.value.length;
-  return n;
-}
-
-/** Trim category rows (largest category first) until the message fits the char budget. */
-function fitBudget(embeds: Embed[]): void {
-  const total = () => embeds.reduce((n, e) => n + embedChars(e), 0);
-  while (total() > TOTAL_BUDGET) {
-    // find the category embed with the most fields and drop its last listing row
-    const withFields = embeds.filter((e) => (e.fields?.length ?? 0) > 0);
-    if (withFields.length === 0) break;
-    const biggest = withFields.reduce((a, b) =>
-      (b.fields?.length ?? 0) > (a.fields?.length ?? 0) ? b : a,
-    );
-    const fields = biggest.fields!;
-    // replace the last row (or the existing overflow row) with a compact overflow note
-    const last = fields[fields.length - 1];
-    if (last.name.startsWith("+")) fields.pop();
-    fields.pop();
-    fields.push({
-      name: "…more truncated",
-      value: "run `housing find` for the full set",
-      inline: false,
-    });
-  }
-}
-
-/** Build the one-message digest for a run's events (null if there's nothing to say). */
-export function buildDigest(events: ListingEvent[]): WebhookPayload | null {
-  if (events.length === 0) return null;
-  const news = events.filter((e) => e.type === "new");
-  const changed = events.filter((e) => e.type === "changed");
-  const removed = events.filter((e) => e.type === "removed");
-
-  const header: Embed = {
-    title: "SF Rentals — digest",
-    description: `**${news.length} new** · **${changed.length} changed** · **${removed.length} removed**`,
-    color: COLOR.header,
+/** Build the multipart body that rewrites a message to its delisted state. */
+function delistedForm(info: DelistedInfo): FormData {
+  const embed: Embed = {
+    title: trunc(`🔴 Delisted · ${info.title}`, LIMIT.title),
+    url: info.url,
+    // Embed titles don't render markdown; put the strikethrough in the description.
+    description: `~~${trunc(info.title, 400)}~~\nNo longer listed · via ${info.source}`,
+    color: COLOR.delisted,
     timestamp: new Date().toISOString(),
   };
-  const embeds = [
-    header,
-    categoryEmbed("🟢 New listings", COLOR.new, news),
-    categoryEmbed("🟡 Price & status changes", COLOR.changed, changed),
-    categoryEmbed("🔴 Removed", COLOR.removed, removed),
-  ].filter((e): e is Embed => e !== null);
-
-  fitBudget(embeds);
-  return {
-    username: WEBHOOK_USERNAME,
-    allowed_mentions: { parse: [] }, // scraped text may contain @everyone — never let it ping
-    embeds: embeds.slice(0, LIMIT.embedsPerMessage),
-  };
+  const form = new FormData();
+  // attachments:[] drops the previously-uploaded map image on edit.
+  form.append("payload_json", JSON.stringify({ embeds: [embed], attachments: [] }));
+  return form;
 }
+
+/** A non-retryable Discord failure (bad payload, unknown message, etc.). */
+export class DiscordError extends Data.TaggedError("DiscordError")<{
+  status: number;
+  detail: string;
+}> {}
+/** Internal marker: this attempt should be retried (already waited if needed). */
+class Retry extends Data.TaggedError("DiscordRetry")<{}> {}
 
 /**
- * POST one payload to a webhook, rate-limit-safe. Uses ?wait=true so a bad payload
- * returns a real 400 (instead of a silent 204). On 429, honors retry_after (SECONDS,
- * a float — a classic ms/s bug). Never retries other 4xx (the payload is the problem).
+ * One POST/PATCH attempt. On 429 it waits retry_after (SECONDS, a float) and on
+ * 5xx it backs off, both before failing with Retry so the outer retry re-runs;
+ * other non-2xx fail fatally. `makeBody` is re-invoked per attempt for a fresh
+ * (un-consumed) FormData.
  */
-export async function sendWebhook(webhookUrl: string, payload: WebhookPayload): Promise<void> {
-  const url = `${webhookUrl}${webhookUrl.includes("?") ? "&" : "?"}wait=true`;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+function attempt(
+  url: string,
+  method: "POST" | "PATCH",
+  makeBody: () => FormData,
+): Effect.Effect<{ id?: string } | null, DiscordError | Retry> {
+  return Effect.gen(function* () {
+    const res = yield* Effect.promise(() => fetch(url, { method, body: makeBody() }));
     if (res.status === 429) {
-      const body = (await res.json().catch(() => ({}))) as { retry_after?: number };
-      await sleep((Number(body.retry_after) || 1) * 1000 + 250); // seconds → ms
-      continue;
+      const body = (yield* Effect.promise(() => res.json().catch(() => ({})))) as {
+        retry_after?: number;
+      };
+      yield* Effect.sleep(Duration.millis((Number(body.retry_after) || 1) * 1000 + 250));
+      return yield* Effect.fail(new Retry());
     }
-    if (!res.ok) throw new Error(`Discord ${res.status}: ${(await res.text()).slice(0, 300)}`);
-    return;
-  }
-  throw new Error("Discord: still rate-limited after retries");
+    if (res.status >= 500) {
+      yield* Effect.sleep(Duration.seconds(1));
+      return yield* Effect.fail(new Retry());
+    }
+    if (!res.ok) {
+      const text = yield* Effect.promise(() => res.text());
+      return yield* Effect.fail(
+        new DiscordError({ status: res.status, detail: text.slice(0, 300) }),
+      );
+    }
+    return (yield* Effect.promise(() => res.json().catch(() => null))) as { id?: string } | null;
+  });
 }
 
-/** Convenience: build + send a run's digest. No-op when there are no events. */
-export async function sendDigest(webhookUrl: string, events: ListingEvent[]): Promise<void> {
-  const payload = buildDigest(events);
-  if (payload) await sendWebhook(webhookUrl, payload);
+function request(
+  url: string,
+  method: "POST" | "PATCH",
+  makeBody: () => FormData,
+): Effect.Effect<{ id?: string } | null, DiscordError> {
+  return attempt(url, method, makeBody).pipe(
+    Effect.retry({ while: (e) => e._tag === "DiscordRetry", schedule: Schedule.recurs(4) }),
+    // Retries exhausted while still rate-limited → surface a fatal error.
+    Effect.catchTag("DiscordRetry", () =>
+      Effect.fail(new DiscordError({ status: 429, detail: "still rate-limited after retries" })),
+    ),
+  );
+}
+
+/** Base webhook URL with any trailing slash removed. */
+const base = (webhook: string): string => webhook.replace(/\/+$/, "");
+
+/** Post a listing card as a new message; yields its message id (or null). */
+export function postCard(
+  webhook: string,
+  card: RenderedCard,
+): Effect.Effect<string | null, DiscordError> {
+  return request(`${base(webhook)}?wait=true`, "POST", () => cardForm(card)).pipe(
+    Effect.map((res) => res?.id ?? null),
+  );
+}
+
+/** Edit a previously-posted message with a fresh card (e.g. after a change). */
+export function editCard(
+  webhook: string,
+  messageId: string,
+  card: RenderedCard,
+): Effect.Effect<void, DiscordError> {
+  return request(`${base(webhook)}/messages/${messageId}`, "PATCH", () => cardForm(card)).pipe(
+    Effect.asVoid,
+  );
+}
+
+/** Rewrite a previously-posted message to its delisted state. */
+export function markDelisted(
+  webhook: string,
+  messageId: string,
+  info: DelistedInfo,
+): Effect.Effect<void, DiscordError> {
+  return request(`${base(webhook)}/messages/${messageId}`, "PATCH", () => delistedForm(info)).pipe(
+    Effect.asVoid,
+  );
 }

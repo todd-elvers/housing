@@ -6,7 +6,9 @@
   "description": "Automated San Francisco rental ingest + change monitoring, exposed as a discoverable CLI",
   "//": "Tasks live in mise.toml (mise run format|lint|typecheck|check|test|housing). package.json holds deps only.",
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.2",
     "citty": "^0.1.6",
+    "effect": "^3.22.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
