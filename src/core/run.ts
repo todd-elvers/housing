@@ -59,10 +59,22 @@ function runSource(store: Store, source: SourceContract): Effect.Effect<SourceSy
   return Effect.tryPromise({
     try: async () => {
       log.info(`· ${source.name}: fetching…`);
-      const listings = await source.fetch();
-      const summary = store.syncSource(source.name, listings, source.snapshotComplete);
-      log.info(`✓ ${source.name}: ${listings.length} listings in ${Date.now() - started}ms`);
-      return summary;
+      // Heartbeat so a slow source (e.g. apartments' multi-minute Apify scrape)
+      // visibly stays alive instead of looking hung.
+      const heartbeat = setInterval(() => {
+        log.info(
+          `  … ${source.name}: still fetching (${Math.round((Date.now() - started) / 1000)}s)`,
+        );
+      }, 30_000);
+      heartbeat.unref?.();
+      try {
+        const listings = await source.fetch();
+        const summary = store.syncSource(source.name, listings, source.snapshotComplete);
+        log.info(`✓ ${source.name}: ${listings.length} listings in ${Date.now() - started}ms`);
+        return summary;
+      } finally {
+        clearInterval(heartbeat);
+      }
     },
     catch: (err) => err as Error,
   }).pipe(
