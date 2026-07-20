@@ -55,12 +55,6 @@ export class Store {
         created_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
-
-      -- Small key/value store (e.g. the Discord backfill cutoff timestamp).
-      CREATE TABLE IF NOT EXISTS meta (
-        key   TEXT PRIMARY KEY,
-        value TEXT
-      );
     `);
     // Backfill later-added columns on DBs created before they existed.
     for (const col of [
@@ -76,30 +70,17 @@ export class Store {
     }
   }
 
-  getMeta(key: string): string | null {
-    const row = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as
-      | { value: string }
-      | undefined;
-    return row?.value ?? null;
-  }
-
-  setMeta(key: string, value: string): void {
-    this.db
-      .prepare("INSERT INTO meta (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=?")
-      .run(key, value, value);
-  }
-
   /** Record the Discord message we posted for a listing (for later edit/delist). */
   setDiscordMessage(id: string, messageId: string): void {
     this.db.prepare("UPDATE listings SET discord_message_id = ? WHERE id = ?").run(messageId, id);
   }
 
   /**
-   * The next batch of listings to post: active, within the commute cap, not yet
-   * posted, and first seen strictly after `cutoff` (so the pre-existing backlog is
-   * never posted). Oldest-first and limited so a burst trickles out over runs.
+   * The next batch of listings to post: active, within the commute cap, and not
+   * yet posted. Newest-first (so fresh listings surface promptly) and limited so
+   * the whole eligible set — backlog included — trickles out across runs.
    */
-  pendingPosts(cutoff: number, maxCommuteMin: number, limit: number): ListingCard[] {
+  pendingPosts(maxCommuteMin: number, limit: number): ListingCard[] {
     return this.db
       .prepare(
         `SELECT id, source, url, title, address, neighborhood, lat, lon, price,
@@ -109,11 +90,22 @@ export class Store {
           WHERE status = 'active'
             AND discord_message_id IS NULL
             AND commute_min IS NOT NULL AND commute_min <= ?
-            AND first_seen > ?
-          ORDER BY first_seen ASC
+          ORDER BY first_seen DESC
           LIMIT ?`,
       )
-      .all(maxCommuteMin, cutoff, limit) as unknown as ListingCard[];
+      .all(maxCommuteMin, limit) as unknown as ListingCard[];
+  }
+
+  /** Count of listings still awaiting a first post (within the commute cap). */
+  countPendingPosts(maxCommuteMin: number): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM listings
+          WHERE status = 'active' AND discord_message_id IS NULL
+            AND commute_min IS NOT NULL AND commute_min <= ?`,
+      )
+      .get(maxCommuteMin) as { n: number };
+    return row.n;
   }
 
   private countForSource(source: string): number {

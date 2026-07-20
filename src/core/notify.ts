@@ -18,9 +18,6 @@ const DEFAULT_NOTIFY_MAX_MIN = 30;
 const DEFAULT_MAX_NEW_PER_RUN = 10;
 const DEFAULT_PACE_MS = 2000;
 const RENDER_CONCURRENCY = 3;
-// meta key holding the "don't post anything first-seen at/before this" timestamp,
-// set once so the pre-existing backlog is never posted (going-forward only).
-const CUTOFF_KEY = "discord_backfill_cutoff";
 
 /**
  * Discord notifier. Prints a digest to stdout, then (when DISCORD_WEBHOOK is set)
@@ -56,9 +53,10 @@ export async function notify(summaries: SourceSyncSummary[], store: Store): Prom
 }
 
 /**
- * Post newly-eligible listings (trickled through a RateLimiter), edit ones that
- * changed, and mark delisted ones — all as individual, in-place-editable messages.
- * A failed write is logged and skipped, never aborting the batch.
+ * Post eligible listings not yet on the board (trickled through a RateLimiter),
+ * edit ones that changed, and mark delisted ones — all as individual,
+ * in-place-editable messages. A failed write is logged and skipped, never
+ * aborting the batch.
  */
 function reconcileDiscord(
   webhook: string,
@@ -71,16 +69,6 @@ function reconcileDiscord(
     const perRun = intEnv("HOUSING_NOTIFY_MAX_PER_RUN", DEFAULT_MAX_NEW_PER_RUN);
     const paceMs = intEnv("HOUSING_NOTIFY_PACE_MS", DEFAULT_PACE_MS);
 
-    // Establish the backfill cutoff once. Everything first seen at/before now is
-    // the pre-existing backlog and is never posted; only later listings trickle out.
-    if (store.getMeta(CUTOFF_KEY) === null) {
-      store.setMeta(CUTOFF_KEY, String(Date.now()));
-      log.print(
-        "· discord: backfill cutoff set — existing listings won't be posted (going forward only)",
-      );
-    }
-    const cutoff = Number(store.getMeta(CUTOFF_KEY));
-
     // Edits + delists only apply to listings we've already posted (have a message id).
     const trackedRows = store.getCards([...changed, ...removed].map((e) => e.listingId));
     const edits = changed
@@ -89,8 +77,9 @@ function reconcileDiscord(
     const delists = removed
       .map((e) => trackedRows.get(e.listingId))
       .filter((row): row is ListingCard => !!row?.discord_message_id);
-    // New posts come from the DB queue (not events), so a burst trickles across runs.
-    const posts = store.pendingPosts(cutoff, maxMin, perRun);
+    // New posts come from the DB queue (not events): the whole eligible set,
+    // newest-first, capped so it trickles out over many runs.
+    const posts = store.pendingPosts(maxMin, perRun);
 
     if (edits.length + delists.length + posts.length === 0) return;
 
@@ -151,10 +140,10 @@ function reconcileDiscord(
     const limiter = yield* RateLimiter.make({ limit: 1, interval: Duration.millis(paceMs) });
     yield* Effect.forEach(writes, (w) => limiter(w), { concurrency: 1 });
 
-    const backlog = store.pendingPosts(cutoff, maxMin, perRun + 1).length;
+    const remaining = store.countPendingPosts(maxMin);
     log.print(
       `→ discord: ${posted} posted, ${edited} edited, ${delisted} delisted` +
-        (backlog > posts.length ? ` (more queued for next run)` : ""),
+        (remaining > 0 ? ` (${remaining} still queued, trickling)` : ""),
     );
   }).pipe(Effect.scoped);
 }
