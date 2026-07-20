@@ -118,10 +118,10 @@ function reconcileDiscord(
 
     const anchor = parseAnchor(process.env.HOUSING_ANCHOR);
     const tileCache: TileCache = new Map();
-    const { renderCard, resolvePhotoUrl } = yield* Effect.promise(() => import("./card.ts"));
+    const { renderCard, resolvePhotos } = yield* Effect.promise(() => import("./card.ts"));
     const render = (row: ListingCard, kind: "new" | "changed", detail: string | null) =>
       Effect.promise(() =>
-        toCard(row, kind, detail, anchor, tileCache, renderCard, resolvePhotoUrl),
+        toCard(row, kind, detail, anchor, tileCache, renderCard, resolvePhotos),
       );
 
     let posted = 0;
@@ -190,7 +190,7 @@ async function toCard(
   anchor: Anchor | null,
   tileCache: TileCache,
   renderCard: typeof import("./card.ts").renderCard,
-  resolvePhotoUrl: typeof import("./card.ts").resolvePhotoUrl,
+  resolvePhotos: typeof import("./card.ts").resolvePhotos,
 ): Promise<RenderedCard> {
   const route = parseRoute(row.commute_route);
   const neighborhood = hoodOf(row);
@@ -207,7 +207,7 @@ async function toCard(
     beds: row.beds,
     baths: row.baths,
     sqft: row.sqft,
-    photoUrl: resolvePhotoUrl(row.raw),
+    photoUrls: resolvePhotos(row.raw),
     commuteMin: row.commute_min,
     route,
     changeDetail: kind === "changed" ? changeDetail : null,

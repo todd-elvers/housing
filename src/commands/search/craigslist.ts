@@ -217,6 +217,7 @@ function decodeItem(it: unknown[], decode: Decode, category: string): RawListing
   let title = "";
   let beds: number | null = null;
   let sqft: number | null = null;
+  let imageUrls: string[] = [];
   for (let i = 6; i < it.length; i++) {
     const el = it[i];
     if (typeof el === "string") {
@@ -228,6 +229,16 @@ function decodeItem(it: unknown[], decode: Decode, category: string): RawListing
         beds = b != null && b >= 0 ? b : null;
         const s = num(el[2]);
         sqft = s != null && s > 0 ? s : null;
+      } else if (el[0] === 4) {
+        // Image tokens "<sizePrefix>:<token>" → images.craigslist.org/<token>_600x450.jpg
+        imageUrls = el
+          .slice(1)
+          .filter((t): t is string => typeof t === "string")
+          .slice(0, 6)
+          .map((t) => {
+            const token = t.includes(":") ? t.slice(t.indexOf(":") + 1) : t;
+            return `https://images.craigslist.org/${token}_600x450.jpg`;
+          });
       }
     }
   }
@@ -295,6 +306,7 @@ function decodeItem(it: unknown[], decode: Decode, category: string): RawListing
       postId: String(pid),
       subarea: sub,
       neighborhood,
+      imageUrls,
     },
   };
 }

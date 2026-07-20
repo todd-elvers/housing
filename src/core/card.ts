@@ -3,10 +3,10 @@ import type { CommuteRoute } from "./commute.ts";
 import { formatLegs } from "./commute.ts";
 import { log } from "./log.ts";
 
-// Renders one listing into a shareable PNG "card": a listing photo + summary text
-// across the top, and an OpenStreetMap map below with the real home→office transit
-// path drawn on it. No paid map API — we fetch OSM raster tiles directly, stitch
-// them, and draw the route + markers ourselves with a 2D canvas.
+// Renders one listing into a shareable PNG "card": a collage of property photos
+// fills the top ~75% with the summary text overlaid, and a small OpenStreetMap
+// strip (~25%) below shows the real home→office transit path. No paid map API —
+// we fetch OSM raster tiles directly, stitch them, and draw route + markers.
 //
 // Everything degrades: no photo, no coordinates, or a failed tile fetch just drops
 // that piece rather than failing the card, and renderCard() returns null only when
@@ -14,8 +14,10 @@ import { log } from "./log.ts";
 
 const CARD_W = 800;
 const CARD_H = 500;
-const TOP_H = 170; // photo + text band
-const PHOTO_W = 260;
+const PHOTO_H = 375; // photo collage fills the top ~75%…
+const MAP_TOP = PHOTO_H; // …and the map a ~25% strip below it
+const SCRIM_H = 150; // dark gradient behind the overlaid summary text
+const MAX_PHOTOS = 4; // property photos shown in the collage
 const TILE = 256;
 const MAX_ZOOM = 17;
 const PIN_HEADROOM = 16; // px of extra top space so pin heads don't clip the map edge
@@ -49,8 +51,8 @@ export interface CardInput {
   beds: number | null;
   baths: number | null;
   sqft: number | null;
-  /** Resolved listing photo URL, if any. */
-  photoUrl: string | null;
+  /** Resolved listing photo URLs (the collage shows up to MAX_PHOTOS). */
+  photoUrls: string[];
   commuteMin: number | null;
   route: CommuteRoute | null;
   /** For changed cards: the "price ↓ … / 2Bd → 1Bd" detail line. */
@@ -65,24 +67,37 @@ export interface Anchor {
 /** In-run cache of fetched tiles (key "z/x/y") so nearby cards share downloads. */
 export type TileCache = Map<string, Promise<Buffer | null>>;
 
-/** Pull a usable photo URL out of a source's raw JSON payload (keys vary by source). */
-export function resolvePhotoUrl(rawJson: string | null): string | null {
-  if (!rawJson) return null;
+/** Pull usable photo URLs out of a source's raw JSON payload (keys vary by source). */
+export function resolvePhotos(rawJson: string | null): string[] {
+  if (!rawJson) return [];
   let raw: Record<string, unknown>;
   try {
     raw = JSON.parse(rawJson) as Record<string, unknown>;
   } catch {
-    return null;
+    return [];
   }
-  const direct = raw.imageUrl ?? raw.imageURL ?? raw.image ?? raw.photo ?? raw.heroImage;
-  if (typeof direct === "string" && /^https?:\/\//.test(direct)) return direct;
-  for (const key of ["image_urls", "imageUrls", "photos", "images"]) {
+  const urls: string[] = [];
+  const push = (v: unknown) => {
+    if (typeof v === "string" && /^https?:\/\//.test(v) && !urls.includes(v)) urls.push(v);
+  };
+
+  // Arrays of URLs (craigslist imageUrls, zillow image_urls, homeharvest alt_photos…).
+  for (const key of ["imageUrls", "image_urls", "photos", "images", "alt_photos"]) {
     const arr = raw[key];
-    if (Array.isArray(arr) && typeof arr[0] === "string" && /^https?:\/\//.test(arr[0])) {
-      return arr[0];
+    if (Array.isArray(arr)) arr.forEach(push);
+  }
+  // Single hero-image keys.
+  for (const key of ["imageUrl", "imageURL", "image", "photo", "heroImage", "primary_photo"]) {
+    push(raw[key]);
+  }
+  // Zumper stores numeric image ids → build CDN URLs.
+  const imageIds = raw.imageIds;
+  if (Array.isArray(imageIds)) {
+    for (const id of imageIds) {
+      if (id != null) push(`https://img.zumpercdn.com/${id}/1280x960?auto=format`);
     }
   }
-  return null;
+  return urls.slice(0, MAX_PHOTOS);
 }
 
 /**
@@ -101,18 +116,16 @@ export async function renderCard(
     ctx.fillStyle = COLORS.bg;
     ctx.fillRect(0, 0, CARD_W, CARD_H);
 
-    // Load the photo first so the layout can adapt: with a photo → a photo+text
-    // band over the map; without one (e.g. Redfin) → a full-bleed map with the
-    // summary overlaid on a scrim, so the card still looks intentional.
-    const photo = await loadPhoto(input.photoUrl);
-    if (photo) {
-      drawPhoto(ctx, photo);
-      drawSummary(ctx, input, PHOTO_W + 24);
-      await drawMap(ctx, input, anchor, tileCache, TOP_H);
+    // Photos fill the top and the map takes a small strip below. With no photos
+    // (e.g. Redfin) the map goes full-bleed so the card still looks intentional.
+    const photos = await loadPhotos(input.photoUrls);
+    if (photos.length > 0) {
+      drawPhotos(ctx, photos);
+      await drawMap(ctx, input, anchor, tileCache, MAP_TOP);
     } else {
       await drawMap(ctx, input, anchor, tileCache, 0);
-      drawSummaryOverlay(ctx, input);
     }
+    drawSummaryOverlay(ctx, input);
 
     return canvas.toBuffer("image/png");
   } catch (err) {
@@ -121,11 +134,10 @@ export async function renderCard(
   }
 }
 
-// ── top band ────────────────────────────────────────────────────────────────
+// ── photo collage ─────────────────────────────────────────────────────────────
 
-/** Fetch + decode the listing photo, or null (no URL, fetch fail, or decode fail). */
-async function loadPhoto(photoUrl: string | null): Promise<Image | null> {
-  if (!photoUrl) return null;
+/** Fetch + decode a single photo, or null (no URL, fetch fail, or decode fail). */
+async function loadPhoto(photoUrl: string): Promise<Image | null> {
   try {
     const bytes = await fetchBytes(photoUrl, {});
     if (!bytes) return null;
@@ -136,18 +148,52 @@ async function loadPhoto(photoUrl: string | null): Promise<Image | null> {
   }
 }
 
-/** Cover-fit the photo into the top-left band. */
-function drawPhoto(ctx: SKRSContext2D, img: Image): void {
+/** Load up to MAX_PHOTOS photos concurrently, keeping only those that decoded. */
+async function loadPhotos(urls: string[]): Promise<Image[]> {
+  const imgs = await Promise.all(urls.slice(0, MAX_PHOTOS).map(loadPhoto));
+  return imgs.filter((i): i is Image => i !== null);
+}
+
+/** Draw the photos as a collage across the top region (0…PHOTO_H). */
+function drawPhotos(ctx: SKRSContext2D, images: Image[]): void {
   ctx.fillStyle = COLORS.panel;
-  ctx.fillRect(0, 0, PHOTO_W, TOP_H);
-  const scale = Math.max(PHOTO_W / img.width, TOP_H / img.height);
-  const w = img.width * scale;
-  const h = img.height * scale;
+  ctx.fillRect(0, 0, CARD_W, PHOTO_H);
+  const rects = photoRects(images.length);
+  images.forEach((img, i) => coverInto(ctx, img, rects[i]));
+}
+
+/** Split the photo region into rects: one big photo left + the rest stacked right. */
+function photoRects(n: number): [number, number, number, number][] {
+  const W = CARD_W;
+  const H = PHOTO_H;
+  const g = 3; // gap between photos
+  if (n <= 1) return [[0, 0, W, H]];
+  if (n === 2) {
+    return [
+      [0, 0, (W - g) / 2, H],
+      [(W + g) / 2, 0, (W - g) / 2, H],
+    ];
+  }
+  const mainW = Math.round(W * 0.62);
+  const rx = mainW + g;
+  const rw = W - rx;
+  const k = n - 1; // thumbnails stacked on the right
+  const th = (H - (k - 1) * g) / k;
+  const rects: [number, number, number, number][] = [[0, 0, mainW, H]];
+  for (let i = 0; i < k; i++) rects.push([rx, Math.round(i * (th + g)), rw, Math.ceil(th)]);
+  return rects;
+}
+
+/** Cover-fit an image into a rect (clipped, centered). */
+function coverInto(ctx: SKRSContext2D, img: Image, [x, y, w, h]: [number, number, number, number]): void {
+  const scale = Math.max(w / img.width, h / img.height);
+  const dw = img.width * scale;
+  const dh = img.height * scale;
   ctx.save();
   ctx.beginPath();
-  ctx.rect(0, 0, PHOTO_W, TOP_H);
+  ctx.rect(x, y, w, h);
   ctx.clip();
-  ctx.drawImage(img, (PHOTO_W - w) / 2, (TOP_H - h) / 2, w, h);
+  ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
   ctx.restore();
 }
 
@@ -186,15 +232,14 @@ function drawSummary(ctx: SKRSContext2D, input: CardInput, x: number): void {
   ctx.fillText(trunc(ctx, tail, CARD_W - x - 20), x, y);
 }
 
-/** No-photo layout: a dark top scrim over the full-bleed map, then the summary. */
+/** A dark top scrim so the overlaid summary stays legible over photos/map. */
 function drawSummaryOverlay(ctx: SKRSContext2D, input: CardInput): void {
-  const scrimH = 180;
-  const grad = ctx.createLinearGradient(0, 0, 0, scrimH);
+  const grad = ctx.createLinearGradient(0, 0, 0, SCRIM_H);
   grad.addColorStop(0, "rgba(15,23,42,0.95)");
   grad.addColorStop(0.65, "rgba(15,23,42,0.82)");
   grad.addColorStop(1, "rgba(15,23,42,0)");
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, CARD_W, scrimH);
+  ctx.fillRect(0, 0, CARD_W, SCRIM_H);
   // A soft shadow keeps the lower (grey) lines legible where the scrim thins out
   // over light map tiles.
   ctx.save();
