@@ -15,6 +15,17 @@ export class Store {
   }
 
   private migrate(): void {
+    // discord_threads was briefly keyed by `neighborhood`; it's a disposable cache,
+    // so if the old shape exists, drop it and let the CREATE below rebuild it keyed
+    // by the (neighborhood + bed-count) group.
+    try {
+      const cols = this.db.prepare("PRAGMA table_info(discord_threads)").all() as {
+        name: string;
+      }[];
+      if (cols.some((c) => c.name === "neighborhood")) this.db.exec("DROP TABLE discord_threads");
+    } catch {
+      /* table absent on a fresh DB */
+    }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS listings (
         id            TEXT PRIMARY KEY,      -- "<source>:<sourceId>"
@@ -56,10 +67,10 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
 
-      -- One Discord forum thread per neighborhood; cards are posted into these.
+      -- One Discord forum thread per group ("<neighborhood> · <beds>"); cards post here.
       CREATE TABLE IF NOT EXISTS discord_threads (
-        neighborhood TEXT PRIMARY KEY,
-        thread_id    TEXT NOT NULL
+        group_key TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL
       );
     `);
     // Backfill later-added columns on DBs created before they existed.
@@ -84,21 +95,21 @@ export class Store {
       .run(messageId, threadId, id);
   }
 
-  /** The Discord thread id for a neighborhood, or null if none has been created. */
-  getThread(neighborhood: string): string | null {
+  /** The Discord thread id for a group, or null if none has been created yet. */
+  getThread(groupKey: string): string | null {
     const row = this.db
-      .prepare("SELECT thread_id FROM discord_threads WHERE neighborhood = ?")
-      .get(neighborhood) as { thread_id: string } | undefined;
+      .prepare("SELECT thread_id FROM discord_threads WHERE group_key = ?")
+      .get(groupKey) as { thread_id: string } | undefined;
     return row?.thread_id ?? null;
   }
 
-  /** Remember the thread we created for a neighborhood. */
-  setThread(neighborhood: string, threadId: string): void {
+  /** Remember the thread we created for a group. */
+  setThread(groupKey: string, threadId: string): void {
     this.db
       .prepare(
-        "INSERT INTO discord_threads (neighborhood, thread_id) VALUES (?,?) ON CONFLICT(neighborhood) DO UPDATE SET thread_id=?",
+        "INSERT INTO discord_threads (group_key, thread_id) VALUES (?,?) ON CONFLICT(group_key) DO UPDATE SET thread_id=?",
       )
-      .run(neighborhood, threadId, threadId);
+      .run(groupKey, threadId, threadId);
   }
 
   /**

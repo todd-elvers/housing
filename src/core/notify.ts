@@ -21,6 +21,14 @@ const DEFAULT_PACE_MS = 2000;
 // Forum thread for listings whose neighborhood can't be determined.
 const OTHER_THREAD = "Other SF";
 
+/** Bed-count bucket used (with the neighborhood) to name a forum thread. */
+function bedBucket(beds: number | null): string {
+  if (beds == null) return "?BR";
+  if (beds <= 0) return "Studio";
+  if (beds >= 3) return "3+BR";
+  return `${beds}BR`;
+}
+
 /**
  * Discord notifier. Prints a digest to stdout, then (when DISCORD_WEBHOOK is set)
  * keeps a live per-listing board in the channel: every eligible listing gets its
@@ -139,16 +147,16 @@ function reconcileDiscord(
       ...posts.map((row) =>
         Effect.gen(function* () {
           const card = yield* render(row, "new", null);
-          // Route to the neighborhood's forum thread, creating it on first use.
-          const threadName = card.neighborhood ?? OTHER_THREAD;
-          const existing = store.getThread(threadName);
+          // Route to the "<neighborhood> · <beds>" forum thread, creating on first use.
+          const group = `${card.neighborhood ?? OTHER_THREAD} · ${bedBucket(row.beds)}`;
+          const existing = store.getThread(group);
           const ref = yield* postCard(
             webhook,
             card,
-            existing ? { threadId: existing } : { threadName },
+            existing ? { threadId: existing } : { threadName: group },
           );
           if (ref) {
-            if (!existing) store.setThread(threadName, ref.threadId);
+            if (!existing) store.setThread(group, ref.threadId);
             store.setDiscordMessage(row.id, ref.messageId, ref.threadId);
             posted++;
           }
