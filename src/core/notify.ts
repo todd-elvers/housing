@@ -15,7 +15,7 @@ const DEFAULT_NOTIFY_MAX_MIN = 30;
 // Trickle controls: at most this many NEW cards post per run (leftovers roll to the
 // next run), each write spaced this many ms apart to respect Discord's per-webhook
 // rate limit (~30/min). Both overridable via env.
-const DEFAULT_MAX_NEW_PER_RUN = 10;
+const DEFAULT_MAX_NEW_PER_RUN = 25;
 const DEFAULT_PACE_MS = 2000;
 const RENDER_CONCURRENCY = 3;
 
