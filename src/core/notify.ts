@@ -32,23 +32,42 @@ export async function notify(summaries: SourceSyncSummary[], store: Store): Prom
   const removed = events.filter((e) => e.type === "removed");
 
   printDigest(summaries, news, changed, removed);
+  await syncDiscord(store, changed, removed);
+}
 
+/** Counts of the writes a Discord sync made, plus how many posts are still queued. */
+export interface DiscordSync {
+  posted: number;
+  edited: number;
+  delisted: number;
+  remaining: number;
+}
+
+/**
+ * Reconcile the Discord board from the DB: post eligible listings not yet on it
+ * (trickled/drained), plus apply any change/removal events passed in. Safe to
+ * call standalone with no events — that just drains the pending post queue and
+ * hits no source or commute APIs (the `notify` command uses this).
+ */
+export async function syncDiscord(
+  store: Store,
+  changed: ListingEvent[] = [],
+  removed: ListingEvent[] = [],
+  maxPerRun?: number,
+): Promise<DiscordSync> {
+  const empty: DiscordSync = { posted: 0, edited: 0, delisted: 0, remaining: 0 };
   const webhook = process.env.DISCORD_WEBHOOK;
   if (!webhook) {
-    if (news.length + changed.length > 0) {
+    if (changed.length + removed.length > 0) {
       log.print("· discord: set DISCORD_WEBHOOK to get notified (skipped)");
     }
-    return;
+    return empty;
   }
-  if (!commuteConfigured()) {
-    log.print("· discord: commute not configured (HOUSING_ANCHOR + TravelTime) — nothing posted");
-    return;
-  }
-
   try {
-    await Effect.runPromise(reconcileDiscord(webhook, store, changed, removed));
+    return await Effect.runPromise(reconcileDiscord(webhook, store, changed, removed, maxPerRun));
   } catch (err) {
     log.error(`! discord failed: ${(err as Error).message}`);
+    return empty;
   }
 }
 
@@ -63,10 +82,11 @@ function reconcileDiscord(
   store: Store,
   changed: ListingEvent[],
   removed: ListingEvent[],
-): Effect.Effect<void> {
+  maxPerRun?: number,
+): Effect.Effect<DiscordSync> {
   return Effect.gen(function* () {
     const maxMin = intEnv("HOUSING_NOTIFY_MAX_MIN", DEFAULT_NOTIFY_MAX_MIN);
-    const perRun = intEnv("HOUSING_NOTIFY_MAX_PER_RUN", DEFAULT_MAX_NEW_PER_RUN);
+    const perRun = maxPerRun ?? intEnv("HOUSING_NOTIFY_MAX_PER_RUN", DEFAULT_MAX_NEW_PER_RUN);
     const paceMs = intEnv("HOUSING_NOTIFY_PACE_MS", DEFAULT_PACE_MS);
 
     // Edits + delists only apply to listings we've already posted (have a message id).
@@ -82,7 +102,9 @@ function reconcileDiscord(
     // it so the backlog trickles across runs. -1 → SQLite unlimited.
     const posts = store.pendingPosts(maxMin, perRun > 0 ? perRun : -1);
 
-    if (edits.length + delists.length + posts.length === 0) return;
+    if (edits.length + delists.length + posts.length === 0) {
+      return { posted: 0, edited: 0, delisted: 0, remaining: store.countPendingPosts(maxMin) };
+    }
 
     const anchor = parseAnchor(process.env.HOUSING_ANCHOR);
     const tileCache: TileCache = new Map();
@@ -139,6 +161,7 @@ function reconcileDiscord(
       `→ discord: ${posted} posted, ${edited} edited, ${delisted} delisted` +
         (remaining > 0 ? ` (${remaining} still queued)` : ""),
     );
+    return { posted, edited, delisted, remaining };
   }).pipe(Effect.scoped);
 }
 
@@ -225,15 +248,6 @@ function parseRoute(json: string | null | undefined): CommuteRoute | null {
   } catch {
     return null;
   }
-}
-
-/** True when commute enrichment can run — i.e. commute times are meaningful. */
-function commuteConfigured(): boolean {
-  return !!(
-    process.env.HOUSING_ANCHOR &&
-    process.env.TRAVELTIME_API_KEY &&
-    process.env.TRAVELTIME_APPLICATION_ID
-  );
 }
 
 function parseAnchor(str: string | undefined): Anchor | null {
