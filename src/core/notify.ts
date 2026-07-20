@@ -282,9 +282,13 @@ function describe(
   const lines: string[] = [];
   if (kind === "changed" && changeDetail) lines.push(`🔔 ${changeDetail}`);
 
+  const raw = parseRaw(row.raw);
+  const hasGym = /\bgym\b|fitness/.test(String(raw.amenities ?? "").toLowerCase());
   const specs = [
     bedsBaths(row.beds, row.baths),
     row.sqft ? `${row.sqft.toLocaleString()} sqft` : null,
+    row.property_type,
+    hasGym ? "🏋️ gym" : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -302,6 +306,11 @@ function describe(
     const legs = route?.legs?.length ? ` · ${formatLegs(route.legs)}` : "";
     lines.push(`🚆 ${mins} min${legs}`);
   }
+
+  const when = [listedAgo(row.posted_at), availableOn(raw.dateAvailable)]
+    .filter(Boolean)
+    .join(" · ");
+  if (when) lines.push(`📅 ${when}`);
 
   lines.push(`via ${sourceName(row.source)}`);
 
@@ -331,6 +340,46 @@ function parseRoute(json: string | null | undefined): CommuteRoute | null {
   } catch {
     return null;
   }
+}
+
+function parseRaw(json: string | null | undefined): Record<string, unknown> {
+  if (!json) return {};
+  try {
+    const v = JSON.parse(json);
+    return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+const shortDate = (t: number): string =>
+  new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+/** "listed today" / "listed 3 days ago" / "listed Jun 2" from an epoch-ms timestamp. */
+function listedAgo(postedAt: number | null): string | null {
+  if (!postedAt) return null;
+  const days = Math.floor((Date.now() - postedAt) / 86_400_000);
+  if (days < 0) return null;
+  if (days === 0) return "listed today";
+  if (days === 1) return "listed yesterday";
+  if (days <= 45) return `listed ${days} days ago`;
+  return `listed ${shortDate(postedAt)}`;
+}
+
+/** "available now" / "available Aug 1" from a date string (ISO or similar). */
+function availableOn(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const t = Date.parse(v);
+  if (!Number.isFinite(t)) return null;
+  if (t <= Date.now()) return "available now";
+  // dateAvailable is a calendar date (usually UTC midnight); format in UTC so it
+  // doesn't slip a day in a west-of-UTC timezone.
+  const d = new Date(t).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+  return `available ${d}`;
 }
 
 function parseAnchor(str: string | undefined): Anchor | null {

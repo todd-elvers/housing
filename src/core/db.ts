@@ -204,7 +204,7 @@ export class Store {
       .prepare(
         `${RANKED_ELIGIBLE}
          SELECT p.id, p.source, p.url, p.title, p.address, p.neighborhood, p.lat, p.lon,
-                p.price, p.beds, p.baths, p.sqft, p.property_type, p.commute_min,
+                p.price, p.beds, p.baths, p.sqft, p.property_type, p.posted_at, p.commute_min,
                 p.commute_route, p.raw, p.discord_message_id, p.discord_thread_id
            ${BEST_UNPOSTED}
           ORDER BY p.first_seen DESC
@@ -403,7 +403,7 @@ export class Store {
     if (ids.length === 0) return out;
     const stmt = this.db.prepare(
       `SELECT id, source, url, title, address, neighborhood, lat, lon, price,
-              beds, baths, sqft, property_type, commute_min, commute_route, raw,
+              beds, baths, sqft, property_type, posted_at, commute_min, commute_route, raw,
               discord_message_id, discord_thread_id
          FROM listings WHERE id = ?`,
     );
@@ -434,6 +434,8 @@ export interface ListingCard {
   baths: number | null;
   sqft: number | null;
   property_type: string | null;
+  /** When the listing was posted at the source (epoch ms), or null. */
+  posted_at: number | null;
   commute_min: number | null;
   /** JSON-encoded CommuteRoute ({mins, legs, geometry?}) or null. */
   commute_route: string | null;
