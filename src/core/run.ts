@@ -58,6 +58,7 @@ function runSource(store: Store, source: SourceContract): Effect.Effect<SourceSy
   const started = Date.now();
   return Effect.tryPromise({
     try: async () => {
+      log.info(`· ${source.name}: fetching…`);
       const listings = await source.fetch();
       const summary = store.syncSource(source.name, listings, source.snapshotComplete);
       log.info(`✓ ${source.name}: ${listings.length} listings in ${Date.now() - started}ms`);

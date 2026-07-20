@@ -129,6 +129,7 @@ export default defineSource({
     let urls = splitUrls(input.listingUrls);
     if (urls.length === 0) {
       const searchUrl = input.url ?? env.APARTMENTS_SEARCH_URL;
+      log.info(`apartments: Apify search (managed anti-bot — can take a few minutes)…`);
       // NB: the `search` action returns 0 results if maxItems is omitted — it must be sent.
       const found = await runActor<SearchItem>(token, {
         action: "search",
@@ -144,6 +145,7 @@ export default defineSource({
     if (urls.length === 0) return [];
 
     // Step 2: scrape the rich building detail for those URLs.
+    log.info(`apartments: Apify detail scrape for ${urls.length} buildings (a few minutes)…`);
     const details = await runActor<DetailItem>(token, {
       action: "details",
       listingUrls: urls.map((url) => ({ url })),
