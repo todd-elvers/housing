@@ -33,10 +33,17 @@ import type { RawListing } from "../../core/types.ts";
 const SAPI_BASE = "https://sapi.craigslist.org/web/v8/postings/search/full";
 const HOST = "sfbay"; // SF Bay area site (areaId / batch cluster = 1)
 const CLUSTER = 1;
-// The endpoint returns up to 360 matches per request (other page sizes 400).
-// Its deep pagination (the batch "cursor" fields) is unstable — later pages
-// duplicate earlier ones — so we take ONE gentle page rather than hammering it.
-const MAX_LISTINGS = 360;
+// The endpoint returns up to 360 matches per request, and its batch "cursor" is
+// broken (later pages just repeat the first). So to go past 360 we KEYSET-paginate
+// by price: sort priceasc and walk `min_price` up to the last price seen, deduping
+// by post id. Gentle + capped — craigslist bans hammering. Note the API's
+// totalResultCount is inflated by reposts; the real returnable set is far smaller.
+const MAX_LISTINGS = 360; // per-request page size
+const MAX_TOTAL = 1500; // overall cap across paged requests
+const MAX_PAGES = 8; // safety bound on requests per fetch
+const PAGE_PACE_MS = 1200; // gap between paged requests
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 interface Decode {
   minPostingId?: number;
@@ -96,9 +103,9 @@ export default defineSource({
       .number()
       .int()
       .min(1)
-      .max(MAX_LISTINGS)
+      .max(MAX_TOTAL)
       .optional()
-      .describe(`Max listings to return (1-${MAX_LISTINGS}, the per-request max)`),
+      .describe(`Max listings to return across paged requests (1-${MAX_TOTAL})`),
   }),
   requires: {
     CRAIGSLIST_SEARCH_PATH: envSpec(
@@ -117,8 +124,8 @@ export default defineSource({
       "",
     ),
     CRAIGSLIST_MAX_LISTINGS: envSpec(
-      z.coerce.number().int().min(1).max(MAX_LISTINGS).default(MAX_LISTINGS),
-      `Default max listings per ingest run (1-${MAX_LISTINGS})`,
+      z.coerce.number().int().min(1).max(MAX_TOTAL).default(MAX_TOTAL),
+      `Default max listings per ingest run (1-${MAX_TOTAL})`,
       "",
     ),
   },
@@ -126,56 +133,81 @@ export default defineSource({
     const searchPath = env.CRAIGSLIST_SEARCH_PATH || "apa";
     const postedToday = input.postedToday ?? truthy(env.CRAIGSLIST_POSTED_TODAY);
     const query = input.query ?? (env.CRAIGSLIST_QUERY || undefined);
-    const limit = Math.min(input.limit ?? env.CRAIGSLIST_MAX_LISTINGS, MAX_LISTINGS);
+    const limit = Math.min(input.limit ?? env.CRAIGSLIST_MAX_LISTINGS, MAX_TOTAL);
 
-    // Fixed filter params. One request only — batch = cluster-0-360-1-0 asks for
-    // the newest 360 matches (the endpoint's per-request max).
-    const params = new URLSearchParams({ cc: "US", lang: "en", searchPath, sort: "date" });
-    params.set("batch", `${CLUSTER}-0-${MAX_LISTINGS}-1-0`);
-    if (postedToday) params.set("postedToday", "1");
-    if (query) params.set("query", query);
-    setNum(params, "min_price", input.minPrice);
-    setNum(params, "max_price", input.maxPrice);
-    setNum(params, "min_bedrooms", input.minBeds);
-    setNum(params, "max_bedrooms", input.maxBeds);
-    setNum(params, "min_bathrooms", input.minBaths);
-    setNum(params, "max_bathrooms", input.maxBaths);
-    setNum(params, "minSqft", input.minSqft);
-    setNum(params, "maxSqft", input.maxSqft);
-    if (input.hasImage) params.set("hasPic", "1");
-
-    const url = `${SAPI_BASE}?${params.toString()}`;
-    let body: SapiResponse;
-    try {
-      body = await fetchJson<SapiResponse>(url, {
-        headers: {
-          referer: `https://${HOST}.craigslist.org/search/${searchPath}`,
-          accept: "application/json",
-        },
-        retries: 1, // gentle — one retry only (aggressive hammering risks a ban)
-        timeoutMs: 20_000,
-      });
-    } catch (err) {
-      throw enrich(err); // likely a 403 on a datacenter IP
-    }
-
-    const data = body.data;
-    const items = Array.isArray(data?.items) ? data.items : [];
-    const decode: Decode = data?.decode ?? {};
-    const category = data?.categoryAbbr || searchPath;
+    // Filter params, sorted price-ascending so we can keyset-paginate on min_price.
+    const makeParams = (minPrice?: number): string => {
+      const p = new URLSearchParams({ cc: "US", lang: "en", searchPath, sort: "priceasc" });
+      p.set("batch", `${CLUSTER}-0-${MAX_LISTINGS}-1-0`);
+      if (postedToday) p.set("postedToday", "1");
+      if (query) p.set("query", query);
+      setNum(p, "min_price", minPrice ?? input.minPrice);
+      setNum(p, "max_price", input.maxPrice);
+      setNum(p, "min_bedrooms", input.minBeds);
+      setNum(p, "max_bedrooms", input.maxBeds);
+      setNum(p, "min_bathrooms", input.minBaths);
+      setNum(p, "max_bathrooms", input.maxBaths);
+      setNum(p, "minSqft", input.minSqft);
+      setNum(p, "maxSqft", input.maxSqft);
+      if (input.hasImage) p.set("hasPic", "1");
+      return p.toString();
+    };
 
     const out: RawListing[] = [];
     const seen = new Set<string>();
-    for (const it of items) {
-      const listing = decodeItem(it, decode, category);
-      if (!listing || seen.has(listing.sourceId)) continue;
-      seen.add(listing.sourceId);
-      out.push(listing);
-      if (out.length >= limit) break;
+    let cursor: number | undefined = input.minPrice; // price keyset cursor
+    let total = 0;
+
+    for (let page = 0; page < MAX_PAGES && out.length < limit; page++) {
+      if (page > 0) await sleep(PAGE_PACE_MS); // gentle — craigslist bans hammering
+      let body: SapiResponse;
+      try {
+        body = await fetchJson<SapiResponse>(`${SAPI_BASE}?${makeParams(cursor)}`, {
+          headers: {
+            referer: `https://${HOST}.craigslist.org/search/${searchPath}`,
+            accept: "application/json",
+          },
+          retries: 1,
+          timeoutMs: 20_000,
+        });
+      } catch (err) {
+        if (out.length > 0) {
+          log.info(`craigslist: page ${page + 1} failed (${String(err)}); returning ${out.length}`);
+          break;
+        }
+        throw enrich(err); // first page failed — likely a 403 on a datacenter IP
+      }
+
+      const data = body.data;
+      const items = Array.isArray(data?.items) ? data.items : [];
+      const decode: Decode = data?.decode ?? {};
+      const category = data?.categoryAbbr || searchPath;
+      total = data?.totalResultCount ?? total;
+
+      let maxPrice = cursor ?? 0;
+      let added = 0;
+      for (const it of items) {
+        const listing = decodeItem(it, decode, category);
+        if (!listing) continue;
+        if (listing.price != null && listing.price > maxPrice) maxPrice = listing.price;
+        if (seen.has(listing.sourceId)) continue;
+        seen.add(listing.sourceId);
+        out.push(listing);
+        added++;
+        if (out.length >= limit) break;
+      }
+      if (page > 0) log.info(`craigslist: page ${page + 1} +${added} (${out.length} so far)`);
+
+      // A short page means we've exhausted what craigslist will return.
+      if (items.length < MAX_LISTINGS || out.length >= limit) break;
+      // Advance the price cursor; bump past a same-price cluster to avoid stalling.
+      cursor = maxPrice > (cursor ?? -1) ? maxPrice : (cursor ?? 0) + 1;
     }
-    const total = data?.totalResultCount;
+
     if (typeof total === "number" && total > out.length) {
-      log.info(`craigslist: returning ${out.length} of ${total} matches (per-request cap)`);
+      log.info(
+        `craigslist: ${out.length} unique (craigslist claims ${total}, inflated by reposts)`,
+      );
     }
     return out;
   },
