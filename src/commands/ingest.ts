@@ -21,15 +21,10 @@ export default defineTool({
   }),
   requires: {
     HOUSING_DB: envSpec(z.string().default("data/housing.db"), "SQLite database path", ""),
-    PUSHOVER_TOKEN: envSpec(
-      z.string().optional(),
-      "Pushover app token (optional; enables push notifications)",
-      "https://pushover.net/apps/build",
-    ),
-    PUSHOVER_USER: envSpec(
-      z.string().optional(),
-      "Pushover user key (optional; enables push notifications)",
-      "https://pushover.net",
+    DISCORD_WEBHOOK: envSpec(
+      z.string().url().optional(),
+      "Discord webhook URL (optional; posts a digest to the shared channel on new/changed/removed)",
+      "https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks",
     ),
   },
   async run({ input, env }) {

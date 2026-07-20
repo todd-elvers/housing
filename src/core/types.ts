@@ -55,6 +55,10 @@ export interface ListingEvent {
   url: string;
   title: string | null;
   price: number | null;
+  /** Enrichment for richer notifications (Discord embeds); null when unknown. */
+  beds?: number | null;
+  baths?: number | null;
+  neighborhood?: string | null;
 }
 
 export interface SourceSyncSummary {

@@ -119,6 +119,9 @@ export class Store {
               url: l.url,
               title: l.title ?? null,
               price: l.price ?? null,
+              beds: l.beds ?? null,
+              baths: l.baths ?? null,
+              neighborhood: l.neighborhood ?? null,
             };
             events.push(ev);
             insertEvent.run(id, source, "new", ev.detail, runTs);
@@ -139,6 +142,9 @@ export class Store {
             url: l.url,
             title: l.title ?? null,
             price: l.price ?? null,
+            beds: l.beds ?? null,
+            baths: l.baths ?? null,
+            neighborhood: l.neighborhood ?? null,
           };
           events.push(ev);
           insertEvent.run(id, source, "changed", detail, runTs);
@@ -174,13 +180,16 @@ export class Store {
       if (snapshotComplete && !seedMode) {
         const stale = this.db
           .prepare(
-            "SELECT id, url, title, price FROM listings WHERE source = ? AND status = 'active' AND last_seen < ?",
+            "SELECT id, url, title, price, beds, baths, neighborhood FROM listings WHERE source = ? AND status = 'active' AND last_seen < ?",
           )
           .all(source, runTs) as {
           id: string;
           url: string;
           title: string | null;
           price: number | null;
+          beds: number | null;
+          baths: number | null;
+          neighborhood: string | null;
         }[];
         const markRemoved = this.db.prepare("UPDATE listings SET status = 'removed' WHERE id = ?");
         for (const s of stale) {
@@ -194,6 +203,9 @@ export class Store {
             url: s.url,
             title: s.title,
             price: s.price,
+            beds: s.beds,
+            baths: s.baths,
+            neighborhood: s.neighborhood,
           });
           removedCount++;
         }

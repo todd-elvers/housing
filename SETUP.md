@@ -94,17 +94,27 @@ Tier-2 (paid/managed anti-bot — **these cost money per call**, so a plain `ing
 `.env.example` lists every variable with a description and where to obtain it. It's
 generated — regenerate after adding a tool with `./housing introspect --format env-example > .env.example`.
 
-### Notifications (Pushover)
+### Notifications (Discord)
 
-Set `PUSHOVER_TOKEN` (app token from <https://pushover.net/apps/build>) and
-`PUSHOVER_USER`. When both are set, any `ingest` that produces changes sends a push.
+Notifications go to a shared **Discord channel** via an incoming webhook — so all
+recipients see them with no per-person config. Create a webhook (Discord → Channel
+Settings → Integrations → Webhooks → New Webhook → Copy URL), then store it:
+
+```sh
+mise run secrets:set -- DISCORD_WEBHOOK   # shared: encrypts into .env.age
+# or, local only:  echo 'DISCORD_WEBHOOK=https://discord.com/api/webhooks/…' >> .env.local
+```
+
+When `DISCORD_WEBHOOK` is set, any `ingest` that produces changes posts a rich
+**sectioned digest** — a header embed plus color-coded 🟢 new / 🟡 changed / 🔴 removed
+sections (one row per listing, with a masked link, price, beds/baths, and neighborhood).
 Unset → stdout digest + `housing.log` only.
 
-> ⚠️ **Unpolished — expect noise.** There's no criteria filtering yet, so every
-> genuinely-new listing counts as an event. A scheduled `ingest` (especially
-> Craigslist's whole-Bay-Area feed) will push often, with large counts. This needs
-> refinement — add price/beds/location filtering so only listings you care about
-> trigger a push — before relying on it for real alerts.
+> ⚠️ **No criteria filtering yet — expect noise.** Every genuinely-new listing counts
+> as an event, so a scheduled `ingest` (especially Craigslist's whole-Bay-Area feed)
+> posts often, with large counts. The digest caps each section at 10 rows with a
+> "+N more", but you'll still want price/beds/location filtering so only listings you
+> care about trigger a post before relying on it for real alerts.
 
 ### Sharing secrets with the team (age-encrypted)
 
@@ -113,10 +123,10 @@ startup** — the plaintext never touches disk. Anyone whose age public key is i
 `.age.public-keys` can clone the repo and run it immediately; no manual `.env` setup.
 
 **Personal vs shared.** `.env.age` is the *shared* team baseline. For a secret you
-DON'T want to share (your own `PUSHOVER_TOKEN`, a machine-specific override), put it
-in **`.env.local`** — a gitignored plaintext file that overrides `.env.age`. Load
+DON'T want to share (a personal API key, a machine-specific override), put it in
+**`.env.local`** — a gitignored plaintext file that overrides `.env.age`. Load
 precedence, highest first: **shell env → `.env.local` → `.env` → `.env.age`**. So
-`echo 'PUSHOVER_TOKEN=...' >> .env.local` keeps your token local and never committed.
+`echo 'RENTCAST_API_KEY=...' >> .env.local` keeps your key local and never committed.
 
 **First time on a machine** — generate your key and get added as a recipient:
 

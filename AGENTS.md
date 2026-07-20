@@ -15,7 +15,7 @@ Search the ingested rental DB by beds/baths/price/keyword and rank results by di
 Fetch enabled sources (free tier-1 by default; --paid adds tier-2), diff against the DB, and notify on new/changed/removed listings.
 - **When:** Run on a schedule (or by hand) to refresh the SF rental database and surface what changed. Plain runs stay free; add --paid (or --source <name>) to include tier-2 paid sources.
 - **Args:** --source, --paid
-- **Env:** HOUSING_DB, PUSHOVER_TOKEN, PUSHOVER_USER
+- **Env:** HOUSING_DB, DISCORD_WEBHOOK
 
 ## `housing introspect`  _(query)_
 Emit the full command catalog (the machine-readable tool manifest for LLMs), or regenerate .env.example / AGENTS.md.

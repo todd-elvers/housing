@@ -1,13 +1,12 @@
 import type { ListingEvent, SourceSyncSummary } from "./types.ts";
 import { log } from "./log.ts";
-
-const PUSHOVER_API = "https://api.pushover.net/1/messages.json";
-const MAX_MESSAGE = 1024; // Pushover message hard limit
+import { sendDigest } from "./discord.ts";
 
 /**
- * Pushover-first notifier. Always prints a digest to stdout; when a run produces
- * events AND PUSHOVER_TOKEN + PUSHOVER_USER are set, sends a Pushover push.
- * Keys are supplied by the user via env (.env) — nothing is hardcoded here.
+ * Discord-first notifier. Always prints a digest to stdout; when a run produces
+ * events AND DISCORD_WEBHOOK is set, posts a rich sectioned-embed digest to the
+ * shared Discord channel (so all recipients see it — no per-person config). The
+ * webhook URL is supplied by the user via env (.env / .env.age) — nothing hardcoded.
  */
 export async function notify(summaries: SourceSyncSummary[]): Promise<void> {
   const events = summaries.flatMap((s) => s.events);
@@ -19,70 +18,18 @@ export async function notify(summaries: SourceSyncSummary[]): Promise<void> {
 
   if (events.length === 0) return; // nothing changed → no push
 
-  const token = process.env.PUSHOVER_TOKEN;
-  const user = process.env.PUSHOVER_USER;
-  if (!token || !user) {
-    log.print("· pushover: set PUSHOVER_TOKEN + PUSHOVER_USER to get pushed (skipped)");
+  const webhook = process.env.DISCORD_WEBHOOK;
+  if (!webhook) {
+    log.print("· discord: set DISCORD_WEBHOOK to get notified (skipped)");
     return;
   }
 
-  const form = new URLSearchParams({
-    token,
-    user,
-    title: `SF rentals: ${news.length} new · ${changed.length} changed · ${removed.length} removed`,
-    message: buildMessage(news, changed, removed),
-    html: "1",
-  });
-  const lead = news[0] ?? changed[0] ?? removed[0];
-  if (lead) {
-    form.set("url", lead.url);
-    form.set("url_title", "Open listing");
-  }
-
   try {
-    const res = await fetch(PUSHOVER_API, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: form.toString(),
-    });
-    if (res.ok) {
-      log.print(`→ pushover sent (${events.length} events)`);
-    } else {
-      log.error(`! pushover HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    }
+    await sendDigest(webhook, events);
+    log.print(`→ discord sent (${events.length} events)`);
   } catch (err) {
-    log.error(`! pushover failed: ${(err as Error).message}`);
+    log.error(`! discord failed: ${(err as Error).message}`);
   }
-}
-
-function buildMessage(
-  news: ListingEvent[],
-  changed: ListingEvent[],
-  removed: ListingEvent[],
-): string {
-  const lines: string[] = [];
-  const add = (label: string, evs: ListingEvent[]) => {
-    for (const e of evs.slice(0, 6)) {
-      const title = esc((e.title ?? "(untitled)").slice(0, 60));
-      lines.push(
-        `<b>${label}</b> ${title} — ${esc(e.detail)}\n<a href="${escAttr(e.url)}">link</a>`,
-      );
-    }
-  };
-  add("NEW", news);
-  add("CHG", changed);
-  add("RM", removed);
-  const total = news.length + changed.length + removed.length;
-  let msg = lines.slice(0, 10).join("\n\n");
-  if (total > 10) msg += `\n\n…and ${total - 10} more`;
-  return msg.slice(0, MAX_MESSAGE);
-}
-
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-function escAttr(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
 
 function printDigest(

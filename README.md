@@ -56,13 +56,13 @@ src/
   args.ts        zod schema → CLI flags (help + parsing)
   catalog.ts     builds the introspect manifest from the live tree
   env/           .env loader (dotenv.ts) + per-command typed validation (spec.ts)
-  core/          engine: db (SQLite diff), http, normalize, notify (Pushover), log
+  core/          engine: db (SQLite diff), http, normalize, notify + discord (webhook), log
   commands/      >>> the only place you add files <<<
     ingest.ts sources.ts introspect.ts
     search/      one file per rental source
 ```
 
-- **Engine:** TypeScript run via `tsx` (no build step), `node:sqlite` storage. Each run diffs sources → `new`/`changed`/`removed` events, notifies via Pushover if `PUSHOVER_TOKEN`/`PUSHOVER_USER` are set. ⚠️ Pushover is **unpolished** — with no criteria filtering yet it can be noisy on scheduled runs; needs refinement (see SETUP.md).
+- **Engine:** TypeScript run via `tsx` (no build step), `node:sqlite` storage. Each run diffs sources → `new`/`changed`/`removed` events and posts a rich **Discord** digest (color-coded new/changed/removed embeds) to a shared channel when `DISCORD_WEBHOOK` is set. ⚠️ Still **no criteria filtering** — it can be noisy on scheduled runs until price/beds/location filters are added (see SETUP.md).
 - **Discoverability:** [citty](https://github.com/unjs/citty) (recursive help) + [zod](https://zod.dev) v4 (one schema drives args, validation, help, and the `--json` manifest).
 - **Env:** secrets load from a gitignored `.env`; each command declares the vars it needs and fails fast (which var + where to get it) before doing any work. Team secrets are committed **encrypted** as `.env.age` (age) and decrypted in memory at startup — never to disk (`mise run secrets:set -- KEY`; see [SETUP.md](./SETUP.md)).
 - **Toolchain:** [`mise`](https://mise.jdx.dev) pins node/aube/python/uv (exact versions in `mise.lock`); [`aube`](https://github.com/jdx/aube) is the package manager, with a **7-day dependency cooldown** (`.npmrc` `minimumReleaseAge`) so freshly-published packages can't slip in.
