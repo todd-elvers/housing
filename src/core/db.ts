@@ -155,6 +155,44 @@ export class Store {
       .all(id) as { source: string; url: string }[];
   }
 
+  /**
+   * Fill fields the winning listing lacks (sqft, beds, baths, property_type) from
+   * the best-ranked sibling in the same unit that does have them — "most-populated
+   * data for the address". Returns the row unchanged if nothing to borrow.
+   */
+  enrichUnit(row: ListingCard): ListingCard {
+    if (row.sqft != null && row.beds != null && row.baths != null && row.property_type != null) {
+      return row;
+    }
+    const best = (field: string) =>
+      `(SELECT o.${field} FROM listings o
+         WHERE o.address_norm = p.address_norm AND o.id <> p.id
+           AND o.status = 'active' AND o.${field} IS NOT NULL
+         ORDER BY ${sourceRankCase("o.source")} LIMIT 1)`;
+    const r = this.db
+      .prepare(
+        `SELECT ${best("sqft")} AS sqft, ${best("beds")} AS beds,
+                ${best("baths")} AS baths, ${best("property_type")} AS property_type
+           FROM listings p WHERE p.id = ? AND p.address_norm IS NOT NULL`,
+      )
+      .get(row.id) as
+      | {
+          sqft: number | null;
+          beds: number | null;
+          baths: number | null;
+          property_type: string | null;
+        }
+      | undefined;
+    if (!r) return row;
+    return {
+      ...row,
+      sqft: row.sqft ?? r.sqft,
+      beds: row.beds ?? r.beds,
+      baths: row.baths ?? r.baths,
+      property_type: row.property_type ?? r.property_type,
+    };
+  }
+
   /** Record the Discord message (and its thread) we posted for a listing. */
   setDiscordMessage(id: string, messageId: string, threadId: string | null): void {
     this.db

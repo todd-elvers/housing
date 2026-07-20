@@ -137,7 +137,7 @@ function reconcileDiscord(
     const render = (row: ListingCard, kind: "new" | "changed", detail: string | null) =>
       Effect.promise(() =>
         toCard(
-          row,
+          store.enrichUnit(row),
           kind,
           detail,
           store.unitSiblings(row.id),
@@ -286,8 +286,8 @@ function describe(
   const hasGym = /\bgym\b|fitness/.test(String(raw.amenities ?? "").toLowerCase());
   const specs = [
     bedsBaths(row.beds, row.baths),
-    row.sqft ? `${row.sqft.toLocaleString()} sqft` : null,
     row.property_type,
+    row.sqft ? `${row.sqft.toLocaleString()} sqft` : null,
     hasGym ? "🏋️ gym" : null,
   ]
     .filter(Boolean)
