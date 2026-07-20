@@ -4,6 +4,45 @@ import { dirname } from "node:path";
 import { contentHash, normalizeAddress } from "./normalize.ts";
 import type { ListingEvent, RawListing, SourceSyncSummary } from "./types.ts";
 
+// Source preference for choosing the ONE listing to post per unit — richer /
+// photo-bearing sources first, bare aggregators (redfin, rentcast) last.
+const SOURCE_RANK = [
+  "zumper",
+  "zillow",
+  "homeharvest",
+  "rentsfnow",
+  "dahlia",
+  "craigslist",
+  "apartments",
+  "redfin",
+  "rentcast",
+  "reddit",
+] as const;
+const RANK_CASE = `CASE p.source ${SOURCE_RANK.map((s, i) => `WHEN '${s}' THEN ${i + 1}`).join(" ")} ELSE 99 END`;
+
+// Rank active, eligible (within-commute) listings within each unit (same
+// address_norm — street + apartment; unaddressed rows are their own unit), best
+// source first. Bound param: max commute minutes.
+const RANKED_ELIGIBLE = `
+  WITH ranked AS (
+    SELECT p.*, ROW_NUMBER() OVER (
+      PARTITION BY COALESCE(p.address_norm, p.id)
+      ORDER BY ${RANK_CASE}, p.first_seen DESC, p.id
+    ) AS rn
+    FROM listings p
+    WHERE p.status = 'active' AND p.commute_min IS NOT NULL AND p.commute_min <= ?
+  )`;
+// The best listing for each unit that isn't posted yet and whose unit has no card.
+const BEST_UNPOSTED = `
+   FROM ranked p
+  WHERE p.rn = 1
+    AND p.discord_message_id IS NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM listings q
+       WHERE q.address_norm IS NOT NULL AND q.address_norm = p.address_norm
+         AND q.discord_message_id IS NOT NULL
+    )`;
+
 export class Store {
   private db: DatabaseSync;
 
@@ -11,6 +50,11 @@ export class Store {
     mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+    // Expose the JS address normalizer to SQL so the dedup key is one source of
+    // truth and can self-heal the stored column (below).
+    this.db.function("norm_addr", { deterministic: true }, (a) =>
+      normalizeAddress(a as string | null),
+    );
     this.migrate();
   }
 
@@ -86,6 +130,11 @@ export class Store {
         /* already present */
       }
     }
+    // Keep the dedup key in sync with the current normalizeAddress logic (only
+    // rewrites rows whose key actually changed, so it's a no-op after the first run).
+    this.db.exec(
+      "UPDATE listings SET address_norm = norm_addr(address) WHERE address IS NOT NULL AND address_norm IS NOT norm_addr(address)",
+    );
   }
 
   /** Record the Discord message (and its thread) we posted for a listing. */
@@ -135,27 +184,21 @@ export class Store {
   pendingPosts(maxCommuteMin: number, limit: number): ListingCard[] {
     return this.db
       .prepare(
-        `SELECT id, source, url, title, address, neighborhood, lat, lon, price,
-                beds, baths, sqft, property_type, commute_min, commute_route, raw,
-                discord_message_id, discord_thread_id
-           FROM listings
-          WHERE status = 'active'
-            AND discord_message_id IS NULL
-            AND commute_min IS NOT NULL AND commute_min <= ?
-          ORDER BY first_seen DESC
+        `${RANKED_ELIGIBLE}
+         SELECT p.id, p.source, p.url, p.title, p.address, p.neighborhood, p.lat, p.lon,
+                p.price, p.beds, p.baths, p.sqft, p.property_type, p.commute_min,
+                p.commute_route, p.raw, p.discord_message_id, p.discord_thread_id
+           ${BEST_UNPOSTED}
+          ORDER BY p.first_seen DESC
           LIMIT ?`,
       )
       .all(maxCommuteMin, limit) as unknown as ListingCard[];
   }
 
-  /** Count of listings still awaiting a first post (within the commute cap). */
+  /** Count of units still awaiting their (best-source) card, within the commute cap. */
   countPendingPosts(maxCommuteMin: number): number {
     const row = this.db
-      .prepare(
-        `SELECT COUNT(*) AS n FROM listings
-          WHERE status = 'active' AND discord_message_id IS NULL
-            AND commute_min IS NOT NULL AND commute_min <= ?`,
-      )
+      .prepare(`${RANKED_ELIGIBLE} SELECT COUNT(*) AS n ${BEST_UNPOSTED}`)
       .get(maxCommuteMin) as { n: number };
     return row.n;
   }
