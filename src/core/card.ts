@@ -17,8 +17,8 @@ const CARD_W = 800;
 const CARD_H = 500;
 const SCRIM_H = 150; // dark gradient behind the overlaid summary text
 const MAX_PHOTOS = 4; // property photos shown in the collage
-const MAP_TILE = 210; // square map inset size (px)
-const MAP_MARGIN = 14; // inset from the card's bottom-right corner
+const MAP_TILE = 108; // square map inset size (px)
+const MAP_MARGIN = 14; // inset from the card's bottom-left corner
 const TILE = 256;
 const MAX_ZOOM = 17;
 const PIN_HEADROOM = 16; // px of extra top space so pin heads don't clip the map edge
@@ -124,7 +124,7 @@ export async function renderCard(
       drawPhotos(ctx, photos);
       const size = MAP_TILE;
       await drawMap(ctx, input, anchor, tileCache, {
-        x: CARD_W - size - MAP_MARGIN,
+        x: MAP_MARGIN,
         y: CARD_H - size - MAP_MARGIN,
         w: size,
         h: size,
@@ -434,17 +434,18 @@ function drawCommuteBadge(ctx: SKRSContext2D, input: CardInput, region: Region):
   const mins = input.route?.mins ?? input.commuteMin;
   if (mins == null) return;
   if (region.rounded) {
-    // Compact "N min" chip in the tile's top-left (the map shows the route).
-    ctx.font = "bold 13px sans-serif";
+    // "N min" chip in the tile's top-left (the map shows the route).
+    ctx.font = "bold 16px sans-serif";
     const label = `${mins} min`;
-    const bw = ctx.measureText(label).width + 14;
-    const bx = region.x + 6;
-    const by = region.y + 6;
-    ctx.fillStyle = "rgba(15,23,42,0.85)";
-    roundRect(ctx, bx, by, bw, 22, 6);
+    const bw = ctx.measureText(label).width + 16;
+    const bh = 25;
+    const bx = region.x + 5;
+    const by = region.y + 5;
+    ctx.fillStyle = "rgba(15,23,42,0.88)";
+    roundRect(ctx, bx, by, bw, bh, 6);
     ctx.fill();
     ctx.fillStyle = COLORS.text;
-    ctx.fillText(label, bx + 7, by + 15);
+    ctx.fillText(label, bx + 8, by + 18);
     return;
   }
   // Full-bleed map: the whole "N min · legs" line along the bottom.
