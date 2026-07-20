@@ -185,7 +185,7 @@ async function toCard(
   resolvePhotoUrl: typeof import("./card.ts").resolvePhotoUrl,
 ): Promise<RenderedCard> {
   const route = parseRoute(row.commute_route);
-  const neighborhood = row.neighborhood ?? neighborhoodAt(row.lat, row.lon);
+  const neighborhood = hoodOf(row);
   const input: CardInput = {
     kind,
     source: row.source,
@@ -215,11 +215,19 @@ async function toCard(
   };
 }
 
+/**
+ * Canonical neighborhood: prefer the point-in-polygon name so every source agrees
+ * on one label (and one forum thread); fall back to the source's only when the
+ * listing has no coordinates to look up.
+ */
+function hoodOf(row: ListingCard): string | null {
+  return neighborhoodAt(row.lat, row.lon) ?? row.neighborhood;
+}
+
 /** "$3,200/mo · 2Bd/1Ba · Mission" for the embed title. */
 function cardTitle(row: ListingCard): string {
-  const neighborhood = row.neighborhood ?? neighborhoodAt(row.lat, row.lon);
   return (
-    [money(row.price), bedsBaths(row.beds, row.baths) || null, neighborhood]
+    [money(row.price), bedsBaths(row.beds, row.baths) || null, hoodOf(row)]
       .filter(Boolean)
       .join(" · ") ||
     row.title ||
