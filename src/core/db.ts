@@ -18,7 +18,9 @@ const SOURCE_RANK = [
   "rentcast",
   "reddit",
 ] as const;
-const RANK_CASE = `CASE p.source ${SOURCE_RANK.map((s, i) => `WHEN '${s}' THEN ${i + 1}`).join(" ")} ELSE 99 END`;
+const sourceRankCase = (col: string): string =>
+  `CASE ${col} ${SOURCE_RANK.map((s, i) => `WHEN '${s}' THEN ${i + 1}`).join(" ")} ELSE 99 END`;
+const RANK_CASE = sourceRankCase("p.source");
 
 // Rank active, eligible (within-commute) listings within each unit (same
 // address_norm — street + apartment; unaddressed rows are their own unit), best
@@ -135,6 +137,22 @@ export class Store {
     this.db.exec(
       "UPDATE listings SET address_norm = norm_addr(address) WHERE address IS NOT NULL AND address_norm IS NOT norm_addr(address)",
     );
+  }
+
+  /**
+   * Other active listings for the same unit (same address_norm) as `id` — the
+   * cross-source duplicates we deduped away — so the card can link to them.
+   */
+  unitSiblings(id: string): { source: string; url: string }[] {
+    return this.db
+      .prepare(
+        `SELECT o.source, o.url
+           FROM listings p
+           JOIN listings o ON o.address_norm = p.address_norm AND o.id <> p.id
+          WHERE p.id = ? AND p.address_norm IS NOT NULL AND o.status = 'active'
+          ORDER BY ${sourceRankCase("o.source")}, o.id`,
+      )
+      .all(id) as { source: string; url: string }[];
   }
 
   /** Record the Discord message (and its thread) we posted for a listing. */

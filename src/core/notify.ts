@@ -21,6 +21,21 @@ const DEFAULT_PACE_MS = 2000;
 // Forum thread for listings whose neighborhood can't be determined.
 const OTHER_THREAD = "Other SF";
 
+// Human-facing source names for the "also on …" cross-source links.
+const SOURCE_NAME: Record<string, string> = {
+  zumper: "Zumper",
+  zillow: "Zillow",
+  craigslist: "Craigslist",
+  rentsfnow: "RentSFNow",
+  dahlia: "DAHLIA",
+  homeharvest: "Realtor",
+  redfin: "Redfin",
+  rentcast: "RentCast",
+  apartments: "Apartments.com",
+  reddit: "Reddit",
+};
+const sourceName = (s: string): string => SOURCE_NAME[s] ?? s;
+
 /** Bed-count bucket used (with the neighborhood) to name a forum thread. */
 function bedBucket(beds: number | null): string {
   if (beds == null) return "?BR";
@@ -120,7 +135,18 @@ function reconcileDiscord(
     const tileCache: TileCache = new Map();
     const { renderCard, resolvePhotos } = yield* Effect.promise(() => import("./card.ts"));
     const render = (row: ListingCard, kind: "new" | "changed", detail: string | null) =>
-      Effect.promise(() => toCard(row, kind, detail, anchor, tileCache, renderCard, resolvePhotos));
+      Effect.promise(() =>
+        toCard(
+          row,
+          kind,
+          detail,
+          store.unitSiblings(row.id),
+          anchor,
+          tileCache,
+          renderCard,
+          resolvePhotos,
+        ),
+      );
 
     let posted = 0;
     let edited = 0;
@@ -185,6 +211,7 @@ async function toCard(
   row: ListingCard,
   kind: "new" | "changed",
   changeDetail: string | null,
+  siblings: { source: string; url: string }[],
   anchor: Anchor | null,
   tileCache: TileCache,
   renderCard: typeof import("./card.ts").renderCard,
@@ -215,7 +242,7 @@ async function toCard(
     kind,
     url: row.url,
     title: cardTitle(row),
-    description: describe(row, kind, changeDetail),
+    description: describe(row, kind, changeDetail, siblings),
     png,
     neighborhood,
   };
@@ -243,9 +270,15 @@ function cardTitle(row: ListingCard): string {
 
 /**
  * Embed description (the text above the card image): the metadata as searchable,
- * selectable text — beds/baths, sqft, neighborhood, commute — mirroring the card.
+ * selectable text — beds/baths, sqft, neighborhood, commute — plus links to the
+ * same unit's other-source listings (the ones we deduped away).
  */
-function describe(row: ListingCard, kind: "new" | "changed", changeDetail: string | null): string {
+function describe(
+  row: ListingCard,
+  kind: "new" | "changed",
+  changeDetail: string | null,
+  siblings: { source: string; url: string }[],
+): string {
   const lines: string[] = [];
   if (kind === "changed" && changeDetail) lines.push(`🔔 ${changeDetail}`);
 
@@ -270,7 +303,17 @@ function describe(row: ListingCard, kind: "new" | "changed", changeDetail: strin
     lines.push(`🚆 ${mins} min${legs}`);
   }
 
-  lines.push(`via ${row.source}`);
+  lines.push(`via ${sourceName(row.source)}`);
+
+  // Link the same unit's other-source listings (one per source, winner excluded).
+  const bySource = new Map<string, string>();
+  for (const s of siblings) {
+    if (s.source !== row.source && !bySource.has(s.source)) bySource.set(s.source, s.url);
+  }
+  if (bySource.size > 0) {
+    const links = [...bySource].map(([src, url]) => `[${sourceName(src)}](${url})`).join(" · ");
+    lines.push(`also on ${links}`);
+  }
   return lines.join("\n");
 }
 
