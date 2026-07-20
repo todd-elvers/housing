@@ -15,10 +15,8 @@ import { log } from "./log.ts";
 
 const CARD_W = 800;
 const CARD_H = 500;
-const SCRIM_H = 150; // dark gradient behind the overlaid summary text
-const MAX_PHOTOS = 4; // property photos shown in the collage
-const MAP_TILE = 108; // square map inset size (px)
-const MAP_MARGIN = 14; // inset from the card's bottom-left corner
+const SCRIM_H = 172; // dark gradient behind the overlaid summary text
+const MAX_PHOTOS = 3; // property photos shown alongside the map cell
 const TILE = 256;
 const MAX_ZOOM = 17;
 const PIN_HEADROOM = 16; // px of extra top space so pin heads don't clip the map edge
@@ -33,6 +31,7 @@ const COLORS = {
   sub: "#94a3b8", // slate-400
   price: "#4ade80", // green-400
   changed: "#fbbf24", // amber-400
+  transit: "#7dd3fc", // sky-300 — commute steps line
   home: "#3b82f6", // blue-500
   office: "#ef4444", // red-500
   route: "#2563eb", // blue-600
@@ -117,18 +116,20 @@ export async function renderCard(
     ctx.fillStyle = COLORS.bg;
     ctx.fillRect(0, 0, CARD_W, CARD_H);
 
-    // Photos fill the whole card with a small square map tile in the bottom-right
-    // corner. With no photos (e.g. Redfin) the map goes full-bleed instead.
+    // Photos form a collage (big photo left, more stacked top-right) with the map
+    // occupying the bottom-right grid cell. With no photos the map goes full-bleed.
     const photos = await loadPhotos(input.photoUrls);
     if (photos.length > 0) {
-      drawPhotos(ctx, photos);
-      const size = MAP_TILE;
+      const { cells, map } = collageLayout(photos.length);
+      ctx.fillStyle = COLORS.panel;
+      ctx.fillRect(0, 0, CARD_W, CARD_H);
+      cells.forEach((rect, i) => coverInto(ctx, photos[i], rect));
       await drawMap(ctx, input, anchor, tileCache, {
-        x: MAP_MARGIN,
-        y: CARD_H - size - MAP_MARGIN,
-        w: size,
-        h: size,
-        rounded: true,
+        x: map[0],
+        y: map[1],
+        w: map[2],
+        h: map[3],
+        compact: true,
       });
     } else {
       await drawMap(ctx, input, anchor, tileCache, { x: 0, y: 0, w: CARD_W, h: CARD_H });
@@ -162,34 +163,29 @@ async function loadPhotos(urls: string[]): Promise<Image[]> {
   return imgs.filter((i): i is Image => i !== null);
 }
 
-/** Draw the photos as a collage filling the whole card. */
-function drawPhotos(ctx: SKRSContext2D, images: Image[]): void {
-  ctx.fillStyle = COLORS.panel;
-  ctx.fillRect(0, 0, CARD_W, CARD_H);
-  const rects = photoRects(images.length);
-  images.forEach((img, i) => coverInto(ctx, img, rects[i]));
-}
+type Rect = [number, number, number, number];
 
-/** Split the card into photo rects: one big photo left + the rest stacked right. */
-function photoRects(n: number): [number, number, number, number][] {
+/**
+ * Collage grid: a big main photo on the left, up to two photos stacked in the
+ * top-right, and the map occupying the bottom-right cell. Returns the photo cells
+ * (main first) plus the map cell.
+ */
+function collageLayout(nPhotos: number): { cells: Rect[]; map: Rect } {
   const W = CARD_W;
   const H = CARD_H;
-  const g = 3; // gap between photos
-  if (n <= 1) return [[0, 0, W, H]];
-  if (n === 2) {
-    return [
-      [0, 0, (W - g) / 2, H],
-      [(W + g) / 2, 0, (W - g) / 2, H],
-    ];
-  }
+  const g = 3; // gap between cells
   const mainW = Math.round(W * 0.62);
   const rx = mainW + g;
   const rw = W - rx;
-  const k = n - 1; // thumbnails stacked on the right
-  const th = (H - (k - 1) * g) / k;
-  const rects: [number, number, number, number][] = [[0, 0, mainW, H]];
-  for (let i = 0; i < k; i++) rects.push([rx, Math.round(i * (th + g)), rw, Math.ceil(th)]);
-  return rects;
+  const rightPhotos = Math.max(0, Math.min(nPhotos - 1, MAX_PHOTOS - 1));
+  const rows = rightPhotos + 1; // right-column rows including the map cell
+  const rh = (H - (rows - 1) * g) / rows;
+  const cells: Rect[] = [[0, 0, mainW, H]];
+  for (let i = 0; i < rightPhotos; i++) {
+    cells.push([rx, Math.round(i * (rh + g)), rw, Math.round(rh)]);
+  }
+  const mapY = Math.round(rightPhotos * (rh + g));
+  return { cells, map: [rx, mapY, rw, H - mapY] };
 }
 
 /** Cover-fit an image into a rect (clipped, centered). */
@@ -209,39 +205,50 @@ function coverInto(
   ctx.restore();
 }
 
-/** Price / specs / place / source, left-aligned at `x`, starting near the top. */
+/** Price / specs / place / commute steps / source, left-aligned at `x`. */
 function drawSummary(ctx: SKRSContext2D, input: CardInput, x: number): void {
-  let y = 46;
+  const maxW = CARD_W - x - 20;
+  let y = 44;
   ctx.textAlign = "left";
   ctx.fillStyle = input.kind === "changed" ? COLORS.changed : COLORS.price;
-  ctx.font = "bold 34px sans-serif";
+  ctx.font = "bold 33px sans-serif";
   ctx.fillText(money(input.price), x, y);
 
-  y += 34;
+  y += 30;
   ctx.fillStyle = COLORS.text;
-  ctx.font = "20px sans-serif";
+  ctx.font = "19px sans-serif";
   const specs = [bedsBaths(input), input.sqft ? `${input.sqft.toLocaleString()} sqft` : null]
     .filter(Boolean)
     .join(" · ");
-  if (specs) ctx.fillText(trunc(ctx, specs, CARD_W - x - 20), x, y);
+  if (specs) ctx.fillText(trunc(ctx, specs, maxW), x, y);
 
-  y += 30;
+  y += 27;
   ctx.fillStyle = COLORS.sub;
-  ctx.font = "18px sans-serif";
+  ctx.font = "17px sans-serif";
   // Neighborhood first (the locality people scan for), then the street address —
   // skipping the street when it's just a repeat of the neighborhood.
   const street = input.address ?? input.title ?? null;
   const place = [input.neighborhood, street === input.neighborhood ? null : street]
     .filter(Boolean)
     .join(" · ");
-  if (place) ctx.fillText(trunc(ctx, place, CARD_W - x - 20), x, y);
+  if (place) ctx.fillText(trunc(ctx, place, maxW), x, y);
 
-  y += 26;
+  // Commute: total time + the per-leg steps (walk → bus → …).
+  const mins = input.route?.mins ?? input.commuteMin;
+  if (mins != null) {
+    y += 26;
+    const legs = input.route?.legs?.length ? formatLegs(input.route.legs) : null;
+    ctx.fillStyle = COLORS.transit;
+    ctx.font = "bold 16px sans-serif";
+    ctx.fillText(trunc(ctx, legs ? `${mins} min · ${legs}` : `${mins} min to work`, maxW), x, y);
+  }
+
+  y += 24;
   ctx.fillStyle = input.kind === "changed" ? COLORS.changed : COLORS.sub;
-  ctx.font = "15px sans-serif";
+  ctx.font = "14px sans-serif";
   const tail =
     input.kind === "changed" && input.changeDetail ? input.changeDetail : `via ${input.source}`;
-  ctx.fillText(trunc(ctx, tail, CARD_W - x - 20), x, y);
+  ctx.fillText(trunc(ctx, tail, maxW), x, y);
 }
 
 /** A dark top scrim so the overlaid summary stays legible over photos/map. */
@@ -269,8 +276,10 @@ interface Region {
   y: number;
   w: number;
   h: number;
-  /** Rounded corners + shadow + white border — used for the corner map tile. */
+  /** Rounded corners + shadow + white border (a floating tile, not a grid cell). */
   rounded?: boolean;
+  /** Small region → use the compact "N min" chip instead of the full badge. */
+  compact?: boolean;
 }
 
 async function drawMap(
@@ -433,8 +442,8 @@ function drawMarker(
 function drawCommuteBadge(ctx: SKRSContext2D, input: CardInput, region: Region): void {
   const mins = input.route?.mins ?? input.commuteMin;
   if (mins == null) return;
-  if (region.rounded) {
-    // "N min" chip in the tile's top-left (the map shows the route).
+  if (region.compact) {
+    // "N min" chip in the map cell's top-left (the map shows the route).
     ctx.font = "bold 16px sans-serif";
     const label = `${mins} min`;
     const bw = ctx.measureText(label).width + 16;
@@ -465,7 +474,7 @@ function drawCommuteBadge(ctx: SKRSContext2D, input: CardInput, region: Region):
 
 function placeholder(ctx: SKRSContext2D, msg: string, region: Region): void {
   ctx.fillStyle = COLORS.sub;
-  ctx.font = `${region.rounded ? 12 : 18}px sans-serif`;
+  ctx.font = `${region.compact ? 12 : 18}px sans-serif`;
   ctx.textAlign = "center";
   ctx.fillText(msg, region.x + region.w / 2, region.y + region.h / 2);
   ctx.textAlign = "left";
