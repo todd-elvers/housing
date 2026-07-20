@@ -4,9 +4,10 @@ import { formatLegs } from "./commute.ts";
 import { log } from "./log.ts";
 
 // Renders one listing into a shareable PNG "card": a collage of property photos
-// fills the top ~75% with the summary text overlaid, and a small OpenStreetMap
-// strip (~25%) below shows the real home→office transit path. No paid map API —
-// we fetch OSM raster tiles directly, stitch them, and draw route + markers.
+// fills the whole card with the summary text overlaid, and a small square
+// OpenStreetMap tile in the bottom-right corner shows the real home→office
+// transit path. No paid map API — we fetch OSM raster tiles directly, stitch
+// them, and draw the route + markers ourselves.
 //
 // Everything degrades: no photo, no coordinates, or a failed tile fetch just drops
 // that piece rather than failing the card, and renderCard() returns null only when
@@ -14,10 +15,10 @@ import { log } from "./log.ts";
 
 const CARD_W = 800;
 const CARD_H = 500;
-const PHOTO_H = 375; // photo collage fills the top ~75%…
-const MAP_TOP = PHOTO_H; // …and the map a ~25% strip below it
 const SCRIM_H = 150; // dark gradient behind the overlaid summary text
 const MAX_PHOTOS = 4; // property photos shown in the collage
+const MAP_TILE = 210; // square map inset size (px)
+const MAP_MARGIN = 14; // inset from the card's bottom-right corner
 const TILE = 256;
 const MAX_ZOOM = 17;
 const PIN_HEADROOM = 16; // px of extra top space so pin heads don't clip the map edge
@@ -116,14 +117,21 @@ export async function renderCard(
     ctx.fillStyle = COLORS.bg;
     ctx.fillRect(0, 0, CARD_W, CARD_H);
 
-    // Photos fill the top and the map takes a small strip below. With no photos
-    // (e.g. Redfin) the map goes full-bleed so the card still looks intentional.
+    // Photos fill the whole card with a small square map tile in the bottom-right
+    // corner. With no photos (e.g. Redfin) the map goes full-bleed instead.
     const photos = await loadPhotos(input.photoUrls);
     if (photos.length > 0) {
       drawPhotos(ctx, photos);
-      await drawMap(ctx, input, anchor, tileCache, MAP_TOP);
+      const size = MAP_TILE;
+      await drawMap(ctx, input, anchor, tileCache, {
+        x: CARD_W - size - MAP_MARGIN,
+        y: CARD_H - size - MAP_MARGIN,
+        w: size,
+        h: size,
+        rounded: true,
+      });
     } else {
-      await drawMap(ctx, input, anchor, tileCache, 0);
+      await drawMap(ctx, input, anchor, tileCache, { x: 0, y: 0, w: CARD_W, h: CARD_H });
     }
     drawSummaryOverlay(ctx, input);
 
@@ -154,18 +162,18 @@ async function loadPhotos(urls: string[]): Promise<Image[]> {
   return imgs.filter((i): i is Image => i !== null);
 }
 
-/** Draw the photos as a collage across the top region (0…PHOTO_H). */
+/** Draw the photos as a collage filling the whole card. */
 function drawPhotos(ctx: SKRSContext2D, images: Image[]): void {
   ctx.fillStyle = COLORS.panel;
-  ctx.fillRect(0, 0, CARD_W, PHOTO_H);
+  ctx.fillRect(0, 0, CARD_W, CARD_H);
   const rects = photoRects(images.length);
   images.forEach((img, i) => coverInto(ctx, img, rects[i]));
 }
 
-/** Split the photo region into rects: one big photo left + the rest stacked right. */
+/** Split the card into photo rects: one big photo left + the rest stacked right. */
 function photoRects(n: number): [number, number, number, number][] {
   const W = CARD_W;
-  const H = PHOTO_H;
+  const H = CARD_H;
   const g = 3; // gap between photos
   if (n <= 1) return [[0, 0, W, H]];
   if (n === 2) {
@@ -185,7 +193,11 @@ function photoRects(n: number): [number, number, number, number][] {
 }
 
 /** Cover-fit an image into a rect (clipped, centered). */
-function coverInto(ctx: SKRSContext2D, img: Image, [x, y, w, h]: [number, number, number, number]): void {
+function coverInto(
+  ctx: SKRSContext2D,
+  img: Image,
+  [x, y, w, h]: [number, number, number, number],
+): void {
   const scale = Math.max(w / img.width, h / img.height);
   const dw = img.width * scale;
   const dh = img.height * scale;
@@ -252,85 +264,109 @@ function drawSummaryOverlay(ctx: SKRSContext2D, input: CardInput): void {
 
 // ── map ───────────────────────────────────────────────────────────────────────
 
+interface Region {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Rounded corners + shadow + white border — used for the corner map tile. */
+  rounded?: boolean;
+}
+
 async function drawMap(
   ctx: SKRSContext2D,
   input: CardInput,
   anchor: Anchor | null,
   tileCache: TileCache,
-  top: number,
+  region: Region,
 ): Promise<void> {
-  const mapH = CARD_H - top;
-  ctx.fillStyle = COLORS.panel;
-  ctx.fillRect(0, top, CARD_W, mapH);
+  const { x, y, w, h } = region;
+  const r = region.rounded ? 10 : 0;
+  const clip = () => roundRect(ctx, x, y, w, h, r);
 
-  if (input.lat == null || input.lon == null) {
-    placeholder(ctx, "location unknown", top);
-    return;
-  }
-
-  const home: LngLat = { lon: input.lon, lat: input.lat };
-  const office = anchor ? { lon: anchor.lon, lat: anchor.lat } : null;
-  // Prefer the true transit path; fall back to a straight home→office line.
-  const path: LngLat[] =
-    input.route?.geometry && input.route.geometry.length > 1
-      ? input.route.geometry.map(([lat, lon]) => ({ lat, lon }))
-      : office
-        ? [home, office]
-        : [home];
-
-  const pts = office ? [home, office, ...path] : [home, ...path];
-  const view = fitView(pts, CARD_W, mapH);
-
-  // Everything map-related is clipped to the map region so tiles/route can't
-  // bleed over the band (or scrim) above it.
+  // Background (with a drop shadow when it's the floating corner tile).
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, top, CARD_W, mapH);
-  ctx.clip();
-
-  // Fetch + paint the tiles that cover the viewport.
-  const n = 1 << view.zoom;
-  const xLeft = Math.floor(view.originX / TILE);
-  const xRight = Math.floor((view.originX + CARD_W) / TILE);
-  const yTop = Math.floor(view.originY / TILE);
-  const yBot = Math.floor((view.originY + mapH) / TILE);
-
-  const jobs: Promise<void>[] = [];
-  for (let tx = xLeft; tx <= xRight; tx++) {
-    for (let ty = yTop; ty <= yBot; ty++) {
-      const wx = ((tx % n) + n) % n; // wrap horizontally
-      if (ty < 0 || ty >= n) continue;
-      const key = `${view.zoom}/${wx}/${ty}`;
-      const px = tx * TILE - view.originX;
-      const py = top + (ty * TILE - view.originY);
-      jobs.push(
-        getTile(key, tileCache).then((buf) => {
-          if (!buf) return;
-          return loadImage(buf).then((img) => {
-            ctx.drawImage(img, px, py, TILE, TILE);
-          });
-        }),
-      );
-    }
+  if (region.rounded) {
+    ctx.shadowColor = "rgba(0,0,0,0.45)";
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 3;
   }
-  await Promise.all(jobs);
-
-  drawRoute(ctx, path, view, top);
-  if (office) drawMarker(ctx, project(office, view, top), COLORS.office, "W");
-  drawMarker(ctx, project(home, view, top), COLORS.home, "H");
-
+  ctx.fillStyle = COLORS.panel;
+  clip();
+  ctx.fill();
   ctx.restore();
 
-  drawCommuteBadge(ctx, input);
-  // subtle attribution required by OSM
-  ctx.fillStyle = "rgba(255,255,255,0.6)";
-  ctx.font = "11px sans-serif";
-  ctx.textAlign = "right";
-  ctx.fillText("© OpenStreetMap", CARD_W - 6, CARD_H - 6);
-  ctx.textAlign = "left";
+  if (input.lat != null && input.lon != null) {
+    const home: LngLat = { lon: input.lon, lat: input.lat };
+    const office = anchor ? { lon: anchor.lon, lat: anchor.lat } : null;
+    // Prefer the true transit path; fall back to a straight home→office line.
+    const path: LngLat[] =
+      input.route?.geometry && input.route.geometry.length > 1
+        ? input.route.geometry.map(([lat, lon]) => ({ lat, lon }))
+        : office
+          ? [home, office]
+          : [home];
+
+    const pts = office ? [home, office, ...path] : [home, ...path];
+    const view = fitView(pts, w, h);
+
+    ctx.save();
+    clip();
+    ctx.clip();
+
+    // Fetch + paint the tiles that cover the viewport.
+    const n = 1 << view.zoom;
+    const xLeft = Math.floor(view.originX / TILE);
+    const xRight = Math.floor((view.originX + w) / TILE);
+    const yTop = Math.floor(view.originY / TILE);
+    const yBot = Math.floor((view.originY + h) / TILE);
+
+    const jobs: Promise<void>[] = [];
+    for (let tx = xLeft; tx <= xRight; tx++) {
+      for (let ty = yTop; ty <= yBot; ty++) {
+        const wx = ((tx % n) + n) % n; // wrap horizontally
+        if (ty < 0 || ty >= n) continue;
+        const key = `${view.zoom}/${wx}/${ty}`;
+        const px = x + (tx * TILE - view.originX);
+        const py = y + (ty * TILE - view.originY);
+        jobs.push(
+          getTile(key, tileCache).then((buf) => {
+            if (!buf) return;
+            return loadImage(buf).then((img) => {
+              ctx.drawImage(img, px, py, TILE, TILE);
+            });
+          }),
+        );
+      }
+    }
+    await Promise.all(jobs);
+
+    drawRoute(ctx, path, view, region);
+    if (office) drawMarker(ctx, project(office, view, region), COLORS.office, "W");
+    drawMarker(ctx, project(home, view, region), COLORS.home, "H");
+
+    ctx.fillStyle = "rgba(255,255,255,0.65)";
+    ctx.font = "9px sans-serif";
+    ctx.textAlign = "right";
+    ctx.fillText("© OSM", x + w - 4, y + h - 4);
+    ctx.textAlign = "left";
+    ctx.restore();
+  } else {
+    placeholder(ctx, "location unknown", region);
+  }
+
+  // White border around the floating tile.
+  if (region.rounded) {
+    clip();
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = "rgba(255,255,255,0.92)";
+    ctx.stroke();
+  }
+
+  drawCommuteBadge(ctx, input, region);
 }
 
-function drawRoute(ctx: SKRSContext2D, path: LngLat[], view: View, top: number): void {
+function drawRoute(ctx: SKRSContext2D, path: LngLat[], view: View, region: Region): void {
   if (path.length < 2) return;
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
@@ -341,7 +377,7 @@ function drawRoute(ctx: SKRSContext2D, path: LngLat[], view: View, top: number):
   ] as const) {
     ctx.beginPath();
     path.forEach((p, i) => {
-      const { x, y } = project(p, view, top);
+      const { x, y } = project(p, view, region);
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     });
@@ -394,29 +430,43 @@ function drawMarker(
   ctx.textBaseline = "alphabetic";
 }
 
-function drawCommuteBadge(ctx: SKRSContext2D, input: CardInput): void {
+function drawCommuteBadge(ctx: SKRSContext2D, input: CardInput, region: Region): void {
   const mins = input.route?.mins ?? input.commuteMin;
   if (mins == null) return;
+  if (region.rounded) {
+    // Compact "N min" chip in the tile's top-left (the map shows the route).
+    ctx.font = "bold 13px sans-serif";
+    const label = `${mins} min`;
+    const bw = ctx.measureText(label).width + 14;
+    const bx = region.x + 6;
+    const by = region.y + 6;
+    ctx.fillStyle = "rgba(15,23,42,0.85)";
+    roundRect(ctx, bx, by, bw, 22, 6);
+    ctx.fill();
+    ctx.fillStyle = COLORS.text;
+    ctx.fillText(label, bx + 7, by + 15);
+    return;
+  }
+  // Full-bleed map: the whole "N min · legs" line along the bottom.
+  ctx.font = "14px sans-serif";
   const legs = input.route?.legs?.length ? formatLegs(input.route.legs) : null;
   const label = legs ? `${mins} min  ·  ${legs}` : `~${mins} min to work`;
-  ctx.font = "14px sans-serif";
-  const h = 26;
-  const x = 10;
-  // bottom-left, leaving room for the OSM attribution at bottom-right
-  const w = Math.min(ctx.measureText(label).width + 20, CARD_W - 150);
-  const y = CARD_H - h - 10;
+  const bh = 26;
+  const bx = region.x + 10;
+  const by = region.y + region.h - bh - 10;
+  const bw = Math.min(ctx.measureText(label).width + 20, region.w - 150);
   ctx.fillStyle = "rgba(15,23,42,0.82)";
-  roundRect(ctx, x, y, w, h, 6);
+  roundRect(ctx, bx, by, bw, bh, 6);
   ctx.fill();
   ctx.fillStyle = COLORS.text;
-  ctx.fillText(trunc(ctx, label, CARD_W - 40), x + 10, y + 18);
+  ctx.fillText(trunc(ctx, label, region.w - 40), bx + 10, by + 18);
 }
 
-function placeholder(ctx: SKRSContext2D, msg: string, top: number): void {
+function placeholder(ctx: SKRSContext2D, msg: string, region: Region): void {
   ctx.fillStyle = COLORS.sub;
-  ctx.font = "18px sans-serif";
+  ctx.font = `${region.rounded ? 12 : 18}px sans-serif`;
   ctx.textAlign = "center";
-  ctx.fillText(msg, CARD_W / 2, top + (CARD_H - top) / 2);
+  ctx.fillText(msg, region.x + region.w / 2, region.y + region.h / 2);
   ctx.textAlign = "left";
 }
 
@@ -464,9 +514,12 @@ function fitView(pts: LngLat[], vw: number, vh: number): View {
   return { zoom, originX: cx * size - vw / 2, originY: cy * size - vh / 2 - PIN_HEADROOM };
 }
 
-function project(p: LngLat, view: View, top: number): { x: number; y: number } {
+function project(p: LngLat, view: View, region: Region): { x: number; y: number } {
   const size = TILE * (1 << view.zoom);
-  return { x: normX(p.lon) * size - view.originX, y: top + (normY(p.lat) * size - view.originY) };
+  return {
+    x: region.x + (normX(p.lon) * size - view.originX),
+    y: region.y + (normY(p.lat) * size - view.originY),
+  };
 }
 
 // ── tiles + fetch ─────────────────────────────────────────────────────────────

@@ -120,9 +120,7 @@ function reconcileDiscord(
     const tileCache: TileCache = new Map();
     const { renderCard, resolvePhotos } = yield* Effect.promise(() => import("./card.ts"));
     const render = (row: ListingCard, kind: "new" | "changed", detail: string | null) =>
-      Effect.promise(() =>
-        toCard(row, kind, detail, anchor, tileCache, renderCard, resolvePhotos),
-      );
+      Effect.promise(() => toCard(row, kind, detail, anchor, tileCache, renderCard, resolvePhotos));
 
     let posted = 0;
     let edited = 0;
