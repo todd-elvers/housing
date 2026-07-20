@@ -199,8 +199,10 @@ function toListing(l: RcListing): RawListing {
     .toLowerCase();
   return {
     sourceId: l.id,
+    // RentCast exposes no listing URL; a Zillow rentals address search is the best
+    // bet at reaching the actual unit (Zillow indexes most US rentals).
     url: addr
-      ? `https://www.google.com/search?q=${encodeURIComponent(`${addr} for rent`)}`
+      ? `https://www.zillow.com/homes/for_rent/${addr.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "")}_rb/`
       : "https://www.rentcast.io/",
     title: addr || null,
     address: addr || null,
