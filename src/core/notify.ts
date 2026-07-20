@@ -5,7 +5,7 @@ import { editCard, markDelisted, postCard, type RenderedCard } from "./discord.t
 // card.ts pulls in the native canvas binary; import it lazily (only when we
 // actually render cards) so a plain ingest without a webhook never loads it.
 import type { Anchor, CardInput, TileCache } from "./card.ts";
-import { formatLegs, type CommuteRoute } from "./commute.ts";
+import type { CommuteRoute } from "./commute.ts";
 import { neighborhoodAt } from "./geo.ts";
 import type { ListingCard, Store } from "./db.ts";
 
@@ -215,7 +215,7 @@ async function toCard(
     kind,
     url: row.url,
     title: cardTitle(row),
-    description: describe(row, kind, changeDetail, route),
+    description: describe(row, kind, changeDetail),
     png,
     neighborhood,
   };
@@ -242,19 +242,11 @@ function cardTitle(row: ListingCard): string {
 }
 
 /** Embed description: change note (if any) + commute summary + source. */
-function describe(
-  row: ListingCard,
-  kind: "new" | "changed",
-  changeDetail: string | null,
-  route: CommuteRoute | null,
-): string {
+function describe(row: ListingCard, kind: "new" | "changed", changeDetail: string | null): string {
+  // The commute (time + legs) is rendered on the card image itself, so the embed
+  // text only carries the change note (if any) and the source.
   const lines: string[] = [];
   if (kind === "changed" && changeDetail) lines.push(`🔔 ${changeDetail}`);
-  const mins = route?.mins ?? row.commute_min ?? null;
-  if (mins != null) {
-    const legs = route?.legs?.length ? ` · ${formatLegs(route.legs)}` : "";
-    lines.push(`🚆 ${mins} min to work${legs}`);
-  }
   lines.push(`via ${row.source}`);
   return lines.join("\n");
 }

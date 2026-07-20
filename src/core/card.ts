@@ -17,6 +17,7 @@ const CARD_W = 800;
 const CARD_H = 500;
 const SCRIM_H = 172; // dark gradient behind the overlaid summary text
 const MAX_PHOTOS = 3; // property photos shown alongside the map cell
+const MAIN_W = Math.round(800 * 0.62); // main photo column width (matches CARD_W)
 const TILE = 256;
 const MAX_ZOOM = 17;
 const PIN_HEADROOM = 16; // px of extra top space so pin heads don't clip the map edge
@@ -174,13 +175,12 @@ function collageLayout(nPhotos: number): { cells: Rect[]; map: Rect } {
   const W = CARD_W;
   const H = CARD_H;
   const g = 3; // gap between cells
-  const mainW = Math.round(W * 0.62);
-  const rx = mainW + g;
+  const rx = MAIN_W + g;
   const rw = W - rx;
   const rightPhotos = Math.max(0, Math.min(nPhotos - 1, MAX_PHOTOS - 1));
   const rows = rightPhotos + 1; // right-column rows including the map cell
   const rh = (H - (rows - 1) * g) / rows;
-  const cells: Rect[] = [[0, 0, mainW, H]];
+  const cells: Rect[] = [[0, 0, MAIN_W, H]];
   for (let i = 0; i < rightPhotos; i++) {
     cells.push([rx, Math.round(i * (rh + g)), rw, Math.round(rh)]);
   }
@@ -251,19 +251,24 @@ function drawSummary(ctx: SKRSContext2D, input: CardInput, x: number): void {
   ctx.fillText(trunc(ctx, tail, maxW), x, y);
 }
 
-/** A dark top scrim so the overlaid summary stays legible over photos/map. */
+/**
+ * A lighter scrim behind the summary — biased to the left (over the main photo)
+ * so the top-right photo stays visible; the text carries its own shadow for
+ * legibility where the scrim is faint.
+ */
 function drawSummaryOverlay(ctx: SKRSContext2D, input: CardInput): void {
+  // Vertical fade, only across the left main-photo column (its right edge lands
+  // on the grid gap, so there's no visible seam). The right-hand photos stay clear.
   const grad = ctx.createLinearGradient(0, 0, 0, SCRIM_H);
-  grad.addColorStop(0, "rgba(15,23,42,0.95)");
-  grad.addColorStop(0.65, "rgba(15,23,42,0.82)");
+  grad.addColorStop(0, "rgba(15,23,42,0.80)");
+  grad.addColorStop(0.6, "rgba(15,23,42,0.42)");
   grad.addColorStop(1, "rgba(15,23,42,0)");
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, CARD_W, SCRIM_H);
-  // A soft shadow keeps the lower (grey) lines legible where the scrim thins out
-  // over light map tiles.
+  ctx.fillRect(0, 0, MAIN_W, SCRIM_H);
+
   ctx.save();
-  ctx.shadowColor = "rgba(0,0,0,0.6)";
-  ctx.shadowBlur = 4;
+  ctx.shadowColor = "rgba(0,0,0,0.85)";
+  ctx.shadowBlur = 5;
   ctx.shadowOffsetY = 1;
   drawSummary(ctx, input, 20);
   ctx.restore();
@@ -371,8 +376,6 @@ async function drawMap(
     ctx.strokeStyle = "rgba(255,255,255,0.92)";
     ctx.stroke();
   }
-
-  drawCommuteBadge(ctx, input, region);
 }
 
 function drawRoute(ctx: SKRSContext2D, path: LngLat[], view: View, region: Region): void {
@@ -437,39 +440,6 @@ function drawMarker(
   ctx.restore();
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
-}
-
-function drawCommuteBadge(ctx: SKRSContext2D, input: CardInput, region: Region): void {
-  const mins = input.route?.mins ?? input.commuteMin;
-  if (mins == null) return;
-  if (region.compact) {
-    // "N min" chip in the map cell's top-left (the map shows the route).
-    ctx.font = "bold 16px sans-serif";
-    const label = `${mins} min`;
-    const bw = ctx.measureText(label).width + 16;
-    const bh = 25;
-    const bx = region.x + 5;
-    const by = region.y + 5;
-    ctx.fillStyle = "rgba(15,23,42,0.88)";
-    roundRect(ctx, bx, by, bw, bh, 6);
-    ctx.fill();
-    ctx.fillStyle = COLORS.text;
-    ctx.fillText(label, bx + 8, by + 18);
-    return;
-  }
-  // Full-bleed map: the whole "N min · legs" line along the bottom.
-  ctx.font = "14px sans-serif";
-  const legs = input.route?.legs?.length ? formatLegs(input.route.legs) : null;
-  const label = legs ? `${mins} min  ·  ${legs}` : `~${mins} min to work`;
-  const bh = 26;
-  const bx = region.x + 10;
-  const by = region.y + region.h - bh - 10;
-  const bw = Math.min(ctx.measureText(label).width + 20, region.w - 150);
-  ctx.fillStyle = "rgba(15,23,42,0.82)";
-  roundRect(ctx, bx, by, bw, bh, 6);
-  ctx.fill();
-  ctx.fillStyle = COLORS.text;
-  ctx.fillText(trunc(ctx, label, region.w - 40), bx + 10, by + 18);
 }
 
 function placeholder(ctx: SKRSContext2D, msg: string, region: Region): void {
