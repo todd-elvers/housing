@@ -5,7 +5,7 @@ import { editCard, markDelisted, postCard, type RenderedCard } from "./discord.t
 // card.ts pulls in the native canvas binary; import it lazily (only when we
 // actually render cards) so a plain ingest without a webhook never loads it.
 import type { Anchor, CardInput, TileCache } from "./card.ts";
-import type { CommuteRoute } from "./commute.ts";
+import { formatLegs, type CommuteRoute } from "./commute.ts";
 import { neighborhoodAt } from "./geo.ts";
 import type { ListingCard, Store } from "./db.ts";
 
@@ -241,12 +241,35 @@ function cardTitle(row: ListingCard): string {
   );
 }
 
-/** Embed description: change note (if any) + commute summary + source. */
+/**
+ * Embed description (the text above the card image): the metadata as searchable,
+ * selectable text — beds/baths, sqft, neighborhood, commute — mirroring the card.
+ */
 function describe(row: ListingCard, kind: "new" | "changed", changeDetail: string | null): string {
-  // The commute (time + legs) is rendered on the card image itself, so the embed
-  // text only carries the change note (if any) and the source.
   const lines: string[] = [];
   if (kind === "changed" && changeDetail) lines.push(`🔔 ${changeDetail}`);
+
+  const specs = [
+    bedsBaths(row.beds, row.baths),
+    row.sqft ? `${row.sqft.toLocaleString()} sqft` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  if (specs) lines.push(`🛏 ${specs}`);
+
+  const hood = hoodOf(row);
+  const place = [hood, row.address && row.address !== hood ? row.address : null]
+    .filter(Boolean)
+    .join(" · ");
+  if (place) lines.push(`📍 ${place}`);
+
+  const route = parseRoute(row.commute_route);
+  const mins = route?.mins ?? row.commute_min;
+  if (mins != null) {
+    const legs = route?.legs?.length ? ` · ${formatLegs(route.legs)}` : "";
+    lines.push(`🚆 ${mins} min${legs}`);
+  }
+
   lines.push(`via ${row.source}`);
   return lines.join("\n");
 }
