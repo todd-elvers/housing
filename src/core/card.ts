@@ -1,12 +1,11 @@
 import { createCanvas, loadImage, type Image, type SKRSContext2D } from "@napi-rs/canvas";
 import type { CommuteRoute } from "./commute.ts";
-import { formatLegs } from "./commute.ts";
 import { log } from "./log.ts";
 
-// Renders one listing into a shareable PNG "card": a collage of property photos
-// fills the whole card with the summary text overlaid, and a small square
-// OpenStreetMap tile in the bottom-right corner shows the real home→office
-// transit path. No paid map API — we fetch OSM raster tiles directly, stitch
+// Renders one listing into a shareable PNG "card": purely visual — a collage of
+// property photos with the OpenStreetMap commute map (route + home/office pins)
+// in the bottom-right grid cell. All the text metadata lives in the Discord embed
+// above the image. No paid map API — we fetch OSM raster tiles directly, stitch
 // them, and draw the route + markers ourselves.
 //
 // Everything degrades: no photo, no coordinates, or a failed tile fetch just drops
@@ -15,7 +14,6 @@ import { log } from "./log.ts";
 
 const CARD_W = 800;
 const CARD_H = 500;
-const SCRIM_H = 172; // dark gradient behind the overlaid summary text
 const MAX_PHOTOS = 3; // property photos shown alongside the map cell
 const MAIN_W = Math.round(800 * 0.62); // main photo column width (matches CARD_W)
 const TILE = 256;
@@ -28,11 +26,7 @@ const TILE_BASE = "https://tile.openstreetmap.org";
 const COLORS = {
   bg: "#0f172a", // slate-900
   panel: "#1e293b", // slate-800
-  text: "#f1f5f9", // slate-100
   sub: "#94a3b8", // slate-400
-  price: "#4ade80", // green-400
-  changed: "#fbbf24", // amber-400
-  transit: "#7dd3fc", // sky-300 — commute steps line
   home: "#3b82f6", // blue-500
   office: "#ef4444", // red-500
   route: "#2563eb", // blue-600
@@ -135,7 +129,6 @@ export async function renderCard(
     } else {
       await drawMap(ctx, input, anchor, tileCache, { x: 0, y: 0, w: CARD_W, h: CARD_H });
     }
-    drawSummaryOverlay(ctx, input);
 
     return canvas.toBuffer("image/png");
   } catch (err) {
@@ -202,75 +195,6 @@ function coverInto(
   ctx.rect(x, y, w, h);
   ctx.clip();
   ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
-  ctx.restore();
-}
-
-/** Price / specs / place / commute steps / source, left-aligned at `x`. */
-function drawSummary(ctx: SKRSContext2D, input: CardInput, x: number): void {
-  const maxW = CARD_W - x - 20;
-  let y = 44;
-  ctx.textAlign = "left";
-  ctx.fillStyle = input.kind === "changed" ? COLORS.changed : COLORS.price;
-  ctx.font = "bold 33px sans-serif";
-  ctx.fillText(money(input.price), x, y);
-
-  y += 30;
-  ctx.fillStyle = COLORS.text;
-  ctx.font = "19px sans-serif";
-  const specs = [bedsBaths(input), input.sqft ? `${input.sqft.toLocaleString()} sqft` : null]
-    .filter(Boolean)
-    .join(" · ");
-  if (specs) ctx.fillText(trunc(ctx, specs, maxW), x, y);
-
-  y += 27;
-  ctx.fillStyle = COLORS.sub;
-  ctx.font = "17px sans-serif";
-  // Neighborhood first (the locality people scan for), then the street address —
-  // skipping the street when it's just a repeat of the neighborhood.
-  const street = input.address ?? input.title ?? null;
-  const place = [input.neighborhood, street === input.neighborhood ? null : street]
-    .filter(Boolean)
-    .join(" · ");
-  if (place) ctx.fillText(trunc(ctx, place, maxW), x, y);
-
-  // Commute: total time + the per-leg steps (walk → bus → …).
-  const mins = input.route?.mins ?? input.commuteMin;
-  if (mins != null) {
-    y += 26;
-    const legs = input.route?.legs?.length ? formatLegs(input.route.legs) : null;
-    ctx.fillStyle = COLORS.transit;
-    ctx.font = "bold 16px sans-serif";
-    ctx.fillText(trunc(ctx, legs ? `${mins} min · ${legs}` : `${mins} min to work`, maxW), x, y);
-  }
-
-  y += 24;
-  ctx.fillStyle = input.kind === "changed" ? COLORS.changed : COLORS.sub;
-  ctx.font = "14px sans-serif";
-  const tail =
-    input.kind === "changed" && input.changeDetail ? input.changeDetail : `via ${input.source}`;
-  ctx.fillText(trunc(ctx, tail, maxW), x, y);
-}
-
-/**
- * A lighter scrim behind the summary — biased to the left (over the main photo)
- * so the top-right photo stays visible; the text carries its own shadow for
- * legibility where the scrim is faint.
- */
-function drawSummaryOverlay(ctx: SKRSContext2D, input: CardInput): void {
-  // Vertical fade, only across the left main-photo column (its right edge lands
-  // on the grid gap, so there's no visible seam). The right-hand photos stay clear.
-  const grad = ctx.createLinearGradient(0, 0, 0, SCRIM_H);
-  grad.addColorStop(0, "rgba(15,23,42,0.80)");
-  grad.addColorStop(0.6, "rgba(15,23,42,0.42)");
-  grad.addColorStop(1, "rgba(15,23,42,0)");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, MAIN_W, SCRIM_H);
-
-  ctx.save();
-  ctx.shadowColor = "rgba(0,0,0,0.85)";
-  ctx.shadowBlur = 5;
-  ctx.shadowOffsetY = 1;
-  drawSummary(ctx, input, 20);
   ctx.restore();
 }
 
@@ -544,25 +468,3 @@ function roundRect(
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
 }
-
-function trunc(ctx: SKRSContext2D, s: string, maxWidth: number): string {
-  if (ctx.measureText(s).width <= maxWidth) return s;
-  let lo = 0;
-  let hi = s.length;
-  while (lo < hi) {
-    const mid = (lo + hi + 1) >> 1;
-    if (ctx.measureText(`${s.slice(0, mid)}…`).width <= maxWidth) lo = mid;
-    else hi = mid - 1;
-  }
-  return `${s.slice(0, lo)}…`;
-}
-
-function money(p: number | null): string {
-  return typeof p === "number" ? `$${p.toLocaleString()}/mo` : "price n/a";
-}
-function bedsBaths(input: CardInput): string {
-  const beds = input.beds == null ? null : input.beds === 0 ? "Studio" : `${num(input.beds)}Bd`;
-  const baths = input.baths == null ? null : `${num(input.baths)}Ba`;
-  return [beds, baths].filter(Boolean).join("/");
-}
-const num = (n: number): string => (Number.isInteger(n) ? String(n) : n.toFixed(1));
