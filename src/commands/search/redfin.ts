@@ -60,6 +60,7 @@ interface RedfinHome {
     centroid?: { centroid?: { latitude?: number; longitude?: number } };
   };
   sashes?: { sashTypeName?: string; timeOnRedfin?: string }[];
+  photosInfo?: { photoRanges?: { startPos?: number; endPos?: number }[] };
 }
 interface RentalExtension {
   rentalId?: string;
@@ -247,6 +248,20 @@ function map(hd: RedfinHome, re: RentalExtension | undefined): RawListing {
     .toLowerCase()
     .trim();
 
+  // Rental photos live on the CDN keyed by the rentalId GUID. The search feed gives
+  // no URLs, but the pattern is stable and version "1" (the original upload) is
+  // reliably present; build a few and let the card drop any that 404.
+  const rentalId = re?.rentalId ?? null;
+  const photoCount =
+    hd.photosInfo?.photoRanges?.reduce((m, r) => Math.max(m, (r.endPos ?? -1) + 1), 0) ?? 0;
+  const imageUrls =
+    rentalId && photoCount > 0
+      ? Array.from(
+          { length: Math.min(photoCount, 4) },
+          (_, i) => `https://ssl.cdn-redfin.com/photo/rent/${rentalId}/bigphoto/${i}_1.jpg`,
+        )
+      : [];
+
   return {
     sourceId: hd.propertyId!,
     url: hd.url ? `https://www.redfin.com${hd.url}` : "https://www.redfin.com/",
@@ -276,6 +291,7 @@ function map(hd: RedfinHome, re: RentalExtension | undefined): RawListing {
         maxPrice: priceMax,
         amenities,
       }),
+      imageUrls,
       // Extra Redfin richness preserved for later enrichment / debugging.
       rentalId: re?.rentalId ?? null,
       rawPropertyType: hd.propertyType ?? null,

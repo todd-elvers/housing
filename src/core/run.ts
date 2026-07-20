@@ -15,6 +15,7 @@ import type { SourceSyncSummary } from "./types.ts";
 export async function ingestSources(
   sources: SourceContract[],
   dbPath?: string,
+  opts: { notify?: boolean } = {},
 ): Promise<SourceSyncSummary[]> {
   const resolvedDbPath = dbPath ?? process.env.HOUSING_DB ?? "data/housing.db";
   const store = new Store(resolvedDbPath);
@@ -43,7 +44,9 @@ export async function ingestSources(
       ),
     );
 
-    yield* Effect.promise(() => notify(summaries, store));
+    // Reconcile the Discord board unless suppressed (e.g. a source-only refresh
+    // that shouldn't trigger a board drain). Per-source progress still logs above.
+    if (opts.notify !== false) yield* Effect.promise(() => notify(summaries, store));
     return summaries;
   }).pipe(Effect.ensuring(Effect.sync(() => store.close())));
 
