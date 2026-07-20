@@ -2,8 +2,9 @@ import { Effect } from "effect";
 import { Store } from "./db.ts";
 import { notify } from "./notify.ts";
 import { enrichCommutes } from "./commute.ts";
+import { apiLimitHint } from "./http.ts";
 import { log } from "./log.ts";
-import type { SourceContract } from "../source.ts";
+import { isPaid, type SourceContract } from "../source.ts";
 import type { SourceSyncSummary } from "./types.ts";
 
 /**
@@ -80,6 +81,20 @@ function runSource(store: Store, source: SourceContract): Effect.Effect<SourceSy
   }).pipe(
     Effect.catchAll((err) => {
       const message = err.message;
+      // Surface an out-of-quota / bad-key failure loudly and actionably instead
+      // of burying it as a generic "HTTP 429". 401/402 are unambiguously a bad
+      // key / no credits (any source). 403/429 are ambiguous: for a keyed source
+      // it's plan/quota; for a free scraper it's almost always an IP/rate block.
+      const status = (err as { status?: number }).status;
+      if (status === 401 || status === 402) {
+        log.warn(`⚠ ${source.name}: ${apiLimitHint(status)}`);
+      } else if (status === 403 || status === 429) {
+        log.warn(
+          isPaid(source)
+            ? `⚠ ${source.name}: ${apiLimitHint(status)}`
+            : `⚠ ${source.name}: blocked (HTTP ${status}) — likely an IP/rate block`,
+        );
+      }
       log.error(`✗ ${source.name}: ${message}`);
       return Effect.succeed<SourceSyncSummary>({
         source: source.name,

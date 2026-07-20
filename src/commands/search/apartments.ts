@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { defineSource } from "../../source.ts";
 import { envSpec } from "../../env/spec.ts";
-import { httpFetch, stripJsonGuard } from "../../core/http.ts";
+import { httpFetch, stripJsonGuard, HttpError } from "../../core/http.ts";
 import { facet } from "../../core/facet.ts";
 import type { RawListing } from "../../core/types.ts";
 
@@ -179,7 +179,8 @@ async function runActor<T>(token: string, inputBody: Record<string, unknown>): P
     timeoutMs: 290_000, // run-sync can take minutes
     retries: 0, // never re-run a paid actor
   });
-  if (!res.ok) throw new Error(`apify apartments (${inputBody.action}) → HTTP ${res.status}`);
+  if (!res.ok)
+    throw new HttpError(res.status, `apify apartments (${inputBody.action}) → HTTP ${res.status}`);
   const items = JSON.parse(stripJsonGuard(await res.text())) as T[];
   return Array.isArray(items) ? items : [];
 }

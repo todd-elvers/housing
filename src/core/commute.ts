@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { Duration, Effect } from "effect";
+import { apiLimitHint } from "./http.ts";
 import { log } from "./log.ts";
 
 // Two-tier commute enrichment for ingested listings:
@@ -103,7 +104,13 @@ function postWithRetry<T>(
 
     const retryable = res.status === 429 || res.status >= 500;
     const text = (yield* Effect.promise(() => res.text().catch(() => ""))).slice(0, 200);
-    if (!retryable) return yield* Effect.fail(new Error(`TravelTime ${res.status}: ${text}`));
+    if (!retryable) {
+      // A 401/402/403 here means the TravelTime key is bad or its quota is spent —
+      // say so plainly (this aborts commute enrichment for the whole run).
+      const hint = apiLimitHint(res.status);
+      if (hint) log.warn(`⚠ TravelTime: ${hint}`);
+      return yield* Effect.fail(new Error(`TravelTime ${res.status}: ${text}`));
+    }
 
     const retryAfter = Number(res.headers.get("retry-after"));
     const waitMs =
