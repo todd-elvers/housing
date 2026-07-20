@@ -67,8 +67,12 @@ const parseDate = (s?: string | null): number | null => (s ? Date.parse(s) || nu
 export default defineSource({
   name: "rentcast",
   summary:
-    "RentCast REST aggregator — the legal Tier-1 backbone with listedDate/status for clean diffs. Paginated over the long-term rentals endpoint with exact beds/baths, propertyType, and recency filters.",
-  when: "Use for a normalized cross-source rental snapshot of SF; misses Craigslist-only / private-landlord units. Note beds/baths are EXACT-match filters, and each 500 listings costs one RentCast request.",
+    "RentCast REST aggregator — a normalized snapshot with listedDate/status for clean diffs, over the long-term rentals endpoint with exact beds/baths, propertyType, and recency filters.",
+  when: "Opt-in only (metered API + it mostly duplicates units we already have from photo-bearing sources, and has no photos itself). Run via `ingest --paid` or `ingest --source rentcast`. Each 500 listings costs one RentCast request.",
+  // Tier 2 = metered/paid, gated out of a plain `ingest`. RentCast's free tier is
+  // just 50 requests/month, and it's a photoless aggregator that near-always loses
+  // the per-unit dedup — so it's not worth spending a call on by default.
+  tier: 2,
   snapshotComplete: false,
   // All optional: `ingest` runs with none set (env config drives the query); an
   // operator/LLM passes any combination to `search rentcast` for ad-hoc lookups.
