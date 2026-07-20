@@ -12,12 +12,12 @@ import type { ListingCard, Store } from "./db.ts";
 // Only listings within this commute (minutes to HOUSING_ANCHOR) are eligible for a
 // Discord card. Override via HOUSING_NOTIFY_MAX_MIN.
 const DEFAULT_NOTIFY_MAX_MIN = 30;
-// Trickle controls: at most this many NEW cards post per run (leftovers roll to the
-// next run), each write spaced this many ms apart to respect Discord's per-webhook
-// rate limit (~30/min). Both overridable via env.
-const DEFAULT_MAX_NEW_PER_RUN = 25;
+// New-post cap per run: 0 (the default) drains every eligible listing each run;
+// a positive value caps it so the backlog trickles across runs instead. Either
+// way each write is spaced DEFAULT_PACE_MS apart to respect Discord's per-webhook
+// rate limit (~30/min). Overridable via env.
+const DEFAULT_MAX_NEW_PER_RUN = 0;
 const DEFAULT_PACE_MS = 2000;
-const RENDER_CONCURRENCY = 3;
 
 /**
  * Discord notifier. Prints a digest to stdout, then (when DISCORD_WEBHOOK is set)
@@ -78,8 +78,9 @@ function reconcileDiscord(
       .map((e) => trackedRows.get(e.listingId))
       .filter((row): row is ListingCard => !!row?.discord_message_id);
     // New posts come from the DB queue (not events): the whole eligible set,
-    // newest-first, capped so it trickles out over many runs.
-    const posts = store.pendingPosts(maxMin, perRun);
+    // newest-first. perRun ≤ 0 (default) drains everything; a positive value caps
+    // it so the backlog trickles across runs. -1 → SQLite unlimited.
+    const posts = store.pendingPosts(maxMin, perRun > 0 ? perRun : -1);
 
     if (edits.length + delists.length + posts.length === 0) return;
 
@@ -91,22 +92,18 @@ function reconcileDiscord(
         toCard(row, kind, detail, anchor, tileCache, renderCard, resolvePhotoUrl),
       );
 
-    // Pre-render card images with bounded concurrency.
-    const editCards = yield* Effect.forEach(edits, (e) => render(e.row, "changed", e.detail), {
-      concurrency: RENDER_CONCURRENCY,
-    });
-    const postCards = yield* Effect.forEach(posts, (row) => render(row, "new", null), {
-      concurrency: RENDER_CONCURRENCY,
-    });
-
     let posted = 0;
     let edited = 0;
     let delisted = 0;
+    // Each write renders its card lazily right before sending, so only one card is
+    // held in memory at a time and OSM tile fetches are throttled to the post pace.
     const writes: Effect.Effect<void>[] = [
-      ...edits.map((e, i) =>
-        editCard(webhook, e.row.discord_message_id!, editCards[i]).pipe(
-          Effect.tap(() => Effect.sync(() => void edited++)),
-        ),
+      ...edits.map((e) =>
+        Effect.gen(function* () {
+          const card = yield* render(e.row, "changed", e.detail);
+          yield* editCard(webhook, e.row.discord_message_id!, card);
+          edited++;
+        }),
       ),
       ...delists.map((row) =>
         markDelisted(webhook, row.discord_message_id!, {
@@ -115,18 +112,15 @@ function reconcileDiscord(
           source: row.source,
         }).pipe(Effect.tap(() => Effect.sync(() => void delisted++))),
       ),
-      ...posts.map((row, i) =>
-        postCard(webhook, postCards[i]).pipe(
-          Effect.tap((id) =>
-            Effect.sync(() => {
-              if (id) {
-                store.setDiscordMessage(row.id, id);
-                posted++;
-              }
-            }),
-          ),
-          Effect.asVoid,
-        ),
+      ...posts.map((row) =>
+        Effect.gen(function* () {
+          const card = yield* render(row, "new", null);
+          const id = yield* postCard(webhook, card);
+          if (id) {
+            store.setDiscordMessage(row.id, id);
+            posted++;
+          }
+        }),
       ),
     ].map((w) =>
       w.pipe(
@@ -136,14 +130,14 @@ function reconcileDiscord(
       ),
     );
 
-    // Trickle: at most one write per paceMs, honoring Discord's per-webhook limit.
+    // One write per paceMs, honoring Discord's per-webhook rate limit.
     const limiter = yield* RateLimiter.make({ limit: 1, interval: Duration.millis(paceMs) });
     yield* Effect.forEach(writes, (w) => limiter(w), { concurrency: 1 });
 
     const remaining = store.countPendingPosts(maxMin);
     log.print(
       `→ discord: ${posted} posted, ${edited} edited, ${delisted} delisted` +
-        (remaining > 0 ? ` (${remaining} still queued, trickling)` : ""),
+        (remaining > 0 ? ` (${remaining} still queued)` : ""),
     );
   }).pipe(Effect.scoped);
 }
