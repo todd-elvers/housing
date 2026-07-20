@@ -39,6 +39,7 @@ export interface RenderedCard {
   url: string; // listing URL (makes the title clickable)
   description: string; // commute / change / source line
   png: Buffer | null; // null → embed posts without an image
+  neighborhood: string | null; // routes the card to its forum thread
 }
 
 /** Minimal listing identity used to render a delisted (removed) message. */
@@ -54,8 +55,12 @@ function trunc(s: string, n: number): string {
 
 const FILENAME = "card.png";
 
-/** Build the multipart body for a normal (active) listing card. */
-function cardForm(card: RenderedCard): FormData {
+/**
+ * Build the multipart body for a normal (active) listing card. When `threadName`
+ * is given (creating a new forum thread) it's included so the post opens the
+ * thread with that title.
+ */
+function cardForm(card: RenderedCard, threadName?: string): FormData {
   const embed: Embed = {
     title: trunc(card.title, LIMIT.title),
     url: card.url,
@@ -74,6 +79,7 @@ function cardForm(card: RenderedCard): FormData {
     JSON.stringify({
       username: WEBHOOK_USERNAME,
       allowed_mentions: { parse: [] }, // scraped text may contain @everyone — never ping
+      ...(threadName ? { thread_name: trunc(threadName, 100) } : {}),
       embeds: [embed],
       attachments,
     }),
@@ -105,6 +111,12 @@ export class DiscordError extends Data.TaggedError("DiscordError")<{
 /** Internal marker: this attempt should be retried (already waited if needed). */
 class Retry extends Data.TaggedError("DiscordRetry")<{}> {}
 
+/** The Discord message fields we use: its id and the (thread) channel it's in. */
+interface MessageRef {
+  id?: string;
+  channel_id?: string;
+}
+
 /**
  * One POST/PATCH attempt. On 429 it waits retry_after (SECONDS, a float) and on
  * 5xx it backs off, both before failing with Retry so the outer retry re-runs;
@@ -115,7 +127,7 @@ function attempt(
   url: string,
   method: "POST" | "PATCH",
   makeBody: () => FormData,
-): Effect.Effect<{ id?: string } | null, DiscordError | Retry> {
+): Effect.Effect<MessageRef | null, DiscordError | Retry> {
   return Effect.gen(function* () {
     const res = yield* Effect.promise(() => fetch(url, { method, body: makeBody() }));
     if (res.status === 429) {
@@ -135,7 +147,7 @@ function attempt(
         new DiscordError({ status: res.status, detail: text.slice(0, 300) }),
       );
     }
-    return (yield* Effect.promise(() => res.json().catch(() => null))) as { id?: string } | null;
+    return (yield* Effect.promise(() => res.json().catch(() => null))) as MessageRef | null;
   });
 }
 
@@ -143,7 +155,7 @@ function request(
   url: string,
   method: "POST" | "PATCH",
   makeBody: () => FormData,
-): Effect.Effect<{ id?: string } | null, DiscordError> {
+): Effect.Effect<MessageRef | null, DiscordError> {
   return attempt(url, method, makeBody).pipe(
     Effect.retry({ while: (e) => e._tag === "DiscordRetry", schedule: Schedule.recurs(4) }),
     // Retries exhausted while still rate-limited → surface a fatal error.
@@ -155,14 +167,37 @@ function request(
 
 /** Base webhook URL with any trailing slash removed. */
 const base = (webhook: string): string => webhook.replace(/\/+$/, "");
+const threadQ = (id: string | null): string => (id ? `&thread_id=${id}` : "");
 
-/** Post a listing card as a new message; yields its message id (or null). */
+/** Where a card is posted: into an existing thread, or a new one to create. */
+export type ThreadTarget = { threadId: string } | { threadName: string };
+
+/** A posted card's coordinates: the message id and the thread it landed in. */
+export interface PostedRef {
+  messageId: string;
+  threadId: string;
+}
+
+/**
+ * Post a listing card — into an existing forum thread (threadId) or, given a
+ * threadName, opening a new thread with that title. Yields the message id + the
+ * thread it landed in (null if Discord returned no id).
+ */
 export function postCard(
   webhook: string,
   card: RenderedCard,
-): Effect.Effect<string | null, DiscordError> {
-  return request(`${base(webhook)}?wait=true`, "POST", () => cardForm(card)).pipe(
-    Effect.map((res) => res?.id ?? null),
+  target: ThreadTarget,
+): Effect.Effect<PostedRef | null, DiscordError> {
+  const intoThread = "threadId" in target;
+  const url = `${base(webhook)}?wait=true${intoThread ? `&thread_id=${target.threadId}` : ""}`;
+  return request(url, "POST", () =>
+    cardForm(card, intoThread ? undefined : target.threadName),
+  ).pipe(
+    Effect.map((res) =>
+      res?.id
+        ? { messageId: res.id, threadId: res.channel_id ?? (intoThread ? target.threadId : res.id) }
+        : null,
+    ),
   );
 }
 
@@ -170,20 +205,20 @@ export function postCard(
 export function editCard(
   webhook: string,
   messageId: string,
+  threadId: string | null,
   card: RenderedCard,
 ): Effect.Effect<void, DiscordError> {
-  return request(`${base(webhook)}/messages/${messageId}`, "PATCH", () => cardForm(card)).pipe(
-    Effect.asVoid,
-  );
+  const url = `${base(webhook)}/messages/${messageId}?wait=true${threadQ(threadId)}`;
+  return request(url, "PATCH", () => cardForm(card)).pipe(Effect.asVoid);
 }
 
 /** Rewrite a previously-posted message to its delisted state. */
 export function markDelisted(
   webhook: string,
   messageId: string,
+  threadId: string | null,
   info: DelistedInfo,
 ): Effect.Effect<void, DiscordError> {
-  return request(`${base(webhook)}/messages/${messageId}`, "PATCH", () => delistedForm(info)).pipe(
-    Effect.asVoid,
-  );
+  const url = `${base(webhook)}/messages/${messageId}?wait=true${threadQ(threadId)}`;
+  return request(url, "PATCH", () => delistedForm(info)).pipe(Effect.asVoid);
 }

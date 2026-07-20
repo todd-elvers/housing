@@ -18,6 +18,8 @@ const DEFAULT_NOTIFY_MAX_MIN = 30;
 // rate limit (~30/min). Overridable via env.
 const DEFAULT_MAX_NEW_PER_RUN = 0;
 const DEFAULT_PACE_MS = 2000;
+// Forum thread for listings whose neighborhood can't be determined.
+const OTHER_THREAD = "Other SF";
 
 /**
  * Discord notifier. Prints a digest to stdout, then (when DISCORD_WEBHOOK is set)
@@ -123,12 +125,12 @@ function reconcileDiscord(
       ...edits.map((e) =>
         Effect.gen(function* () {
           const card = yield* render(e.row, "changed", e.detail);
-          yield* editCard(webhook, e.row.discord_message_id!, card);
+          yield* editCard(webhook, e.row.discord_message_id!, e.row.discord_thread_id, card);
           edited++;
         }),
       ),
       ...delists.map((row) =>
-        markDelisted(webhook, row.discord_message_id!, {
+        markDelisted(webhook, row.discord_message_id!, row.discord_thread_id, {
           title: cardTitle(row),
           url: row.url,
           source: row.source,
@@ -137,9 +139,17 @@ function reconcileDiscord(
       ...posts.map((row) =>
         Effect.gen(function* () {
           const card = yield* render(row, "new", null);
-          const id = yield* postCard(webhook, card);
-          if (id) {
-            store.setDiscordMessage(row.id, id);
+          // Route to the neighborhood's forum thread, creating it on first use.
+          const threadName = card.neighborhood ?? OTHER_THREAD;
+          const existing = store.getThread(threadName);
+          const ref = yield* postCard(
+            webhook,
+            card,
+            existing ? { threadId: existing } : { threadName },
+          );
+          if (ref) {
+            if (!existing) store.setThread(threadName, ref.threadId);
+            store.setDiscordMessage(row.id, ref.messageId, ref.threadId);
             posted++;
           }
         }),
@@ -201,6 +211,7 @@ async function toCard(
     title: cardTitle(row),
     description: describe(row, kind, changeDetail, route),
     png,
+    neighborhood,
   };
 }
 

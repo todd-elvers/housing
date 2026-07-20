@@ -55,12 +55,19 @@ export class Store {
         created_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
+
+      -- One Discord forum thread per neighborhood; cards are posted into these.
+      CREATE TABLE IF NOT EXISTS discord_threads (
+        neighborhood TEXT PRIMARY KEY,
+        thread_id    TEXT NOT NULL
+      );
     `);
     // Backfill later-added columns on DBs created before they existed.
     for (const col of [
       "commute_min INTEGER",
       "commute_route TEXT",
       "discord_message_id TEXT", // set once we've posted this listing's card
+      "discord_thread_id TEXT", // the neighborhood thread the card lives in
     ]) {
       try {
         this.db.exec(`ALTER TABLE listings ADD COLUMN ${col}`);
@@ -70,9 +77,43 @@ export class Store {
     }
   }
 
-  /** Record the Discord message we posted for a listing (for later edit/delist). */
-  setDiscordMessage(id: string, messageId: string): void {
-    this.db.prepare("UPDATE listings SET discord_message_id = ? WHERE id = ?").run(messageId, id);
+  /** Record the Discord message (and its thread) we posted for a listing. */
+  setDiscordMessage(id: string, messageId: string, threadId: string | null): void {
+    this.db
+      .prepare("UPDATE listings SET discord_message_id = ?, discord_thread_id = ? WHERE id = ?")
+      .run(messageId, threadId, id);
+  }
+
+  /** The Discord thread id for a neighborhood, or null if none has been created. */
+  getThread(neighborhood: string): string | null {
+    const row = this.db
+      .prepare("SELECT thread_id FROM discord_threads WHERE neighborhood = ?")
+      .get(neighborhood) as { thread_id: string } | undefined;
+    return row?.thread_id ?? null;
+  }
+
+  /** Remember the thread we created for a neighborhood. */
+  setThread(neighborhood: string, threadId: string): void {
+    this.db
+      .prepare(
+        "INSERT INTO discord_threads (neighborhood, thread_id) VALUES (?,?) ON CONFLICT(neighborhood) DO UPDATE SET thread_id=?",
+      )
+      .run(neighborhood, threadId, threadId);
+  }
+
+  /**
+   * Forget all Discord posting state — message ids, per-listing thread ids, and
+   * the neighborhood→thread map — so the next sync re-posts the board from
+   * scratch. Leaves listings + commute data untouched.
+   */
+  clearDiscordState(): number {
+    const info = this.db
+      .prepare(
+        "UPDATE listings SET discord_message_id = NULL, discord_thread_id = NULL WHERE discord_message_id IS NOT NULL",
+      )
+      .run();
+    this.db.prepare("DELETE FROM discord_threads").run();
+    return Number(info.changes ?? 0);
   }
 
   /**
@@ -85,7 +126,7 @@ export class Store {
       .prepare(
         `SELECT id, source, url, title, address, neighborhood, lat, lon, price,
                 beds, baths, sqft, property_type, commute_min, commute_route, raw,
-                discord_message_id
+                discord_message_id, discord_thread_id
            FROM listings
           WHERE status = 'active'
             AND discord_message_id IS NULL
@@ -291,7 +332,7 @@ export class Store {
     const stmt = this.db.prepare(
       `SELECT id, source, url, title, address, neighborhood, lat, lon, price,
               beds, baths, sqft, property_type, commute_min, commute_route, raw,
-              discord_message_id
+              discord_message_id, discord_thread_id
          FROM listings WHERE id = ?`,
     );
     for (const id of ids) {
@@ -328,6 +369,8 @@ export interface ListingCard {
   raw: string | null;
   /** Discord message id once this listing's card has been posted, else null. */
   discord_message_id: string | null;
+  /** The neighborhood thread the card was posted into, else null. */
+  discord_thread_id: string | null;
 }
 
 function priceLabel(p?: number | null): string {

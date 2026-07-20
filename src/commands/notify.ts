@@ -23,6 +23,12 @@ export default defineTool({
       .describe(
         "Max cards to post this run (default: HOUSING_NOTIFY_MAX_PER_RUN, or all eligible)",
       ),
+    reset: z.coerce
+      .boolean()
+      .default(false)
+      .describe(
+        "Forget all Discord posting state first (message + thread ids), then re-post fresh — e.g. after switching channels. Does NOT touch listings/commute data.",
+      ),
   }),
   requires: {
     HOUSING_DB: envSpec(z.string().default("data/housing.db"), "SQLite database path", ""),
@@ -32,13 +38,17 @@ export default defineTool({
       "https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks",
     ),
   },
-  async run({ input, env }) {
+  async run({ input, env, log }) {
     if (!existsSync(env.HOUSING_DB)) {
       throw new Error(`no database at ${env.HOUSING_DB} — run \`housing ingest\` first`);
     }
     const store = new Store(env.HOUSING_DB);
     try {
-      return await syncDiscord(store, [], [], input.limit);
+      const cleared = input.reset ? store.clearDiscordState() : 0;
+      if (input.reset)
+        log.print(`· discord: reset posting state (${cleared} message(s) forgotten)`);
+      const result = await syncDiscord(store, [], [], input.limit);
+      return { ...result, ...(input.reset ? { cleared } : {}) };
     } finally {
       store.close();
     }
