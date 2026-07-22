@@ -1,5 +1,6 @@
-import { DatabaseSync } from "node:sqlite";
+import type { Client, InStatement } from "@libsql/client";
 import { Duration, Effect } from "effect";
+import { openDb, rowsToObjects } from "./client.ts";
 import { apiLimitHint } from "./http.ts";
 import { log } from "./log.ts";
 
@@ -168,18 +169,16 @@ export async function enrichCommutes(
     "X-Api-Key": apiKey,
   };
 
-  const db = new DatabaseSync(dbPath);
-  ensureColumns(db);
+  const { client: db } = openDb(dbPath);
+  await ensureColumns(db);
 
   // force = recompute from scratch (e.g. after the arrival time or anchor
   // changed): wipe both tiers so everything is refetched.
   if (opts.force) {
-    const info = db
-      .prepare(
-        "UPDATE listings SET commute_min = NULL, commute_route = NULL WHERE commute_min IS NOT NULL OR commute_route IS NOT NULL",
-      )
-      .run();
-    base.cleared = Number(info.changes ?? 0);
+    const rs = await db.execute(
+      "UPDATE listings SET commute_min = NULL, commute_route = NULL WHERE commute_min IS NOT NULL OR commute_route IS NOT NULL",
+    );
+    base.cleared = rs.rowsAffected;
   }
 
   await matrixPass(db, headers, office, base);
@@ -197,20 +196,19 @@ export async function enrichCommutes(
 // --- Tier 1: matrix travel times for every un-timed listing ---
 
 async function matrixPass(
-  db: DatabaseSync,
+  db: Client,
   headers: Record<string, string>,
   office: { id: string; coords: { lat: number; lng: number } },
   out: EnrichResult,
 ): Promise<void> {
-  const pending = db
-    .prepare(
+  const pending = rowsToObjects<{ id: string; lat: number; lon: number }>(
+    await db.execute(
       "SELECT id, lat, lon FROM listings WHERE status = 'active' AND lat IS NOT NULL AND commute_min IS NULL",
-    )
-    .all() as { id: string; lat: number; lon: number }[];
+    ),
+  );
   if (pending.length === 0) return;
 
   log.info(`Matrix: computing transit time for ${pending.length} listing(s)…`);
-  const setMin = db.prepare("UPDATE listings SET commute_min = ? WHERE id = ?");
   const chunks = chunk(pending, MATRIX_CHUNK);
 
   for (let c = 0; c < chunks.length; c++) {
@@ -239,15 +237,20 @@ async function matrixPass(
         log.warn(`  matrix chunk ${c + 1}/${chunks.length}: giving up after retries`);
         continue;
       }
+      const updates: InStatement[] = [];
       for (const result of data.results ?? []) {
         for (const loc of result.locations ?? []) {
-          setMin.run(Math.round(loc.properties.travel_time / 60), loc.id);
+          updates.push({
+            sql: "UPDATE listings SET commute_min = ? WHERE id = ?",
+            args: [Math.round(loc.properties.travel_time / 60), loc.id],
+          });
           out.timed++;
         }
         // Unreachable-within-ceiling listings stay commute_min = NULL; they're
         // effectively "no reasonable commute" and simply won't show a time.
         out.unreachable += result.unreachable?.length ?? 0;
       }
+      if (updates.length > 0) await db.batch(updates, "write");
     } catch (err) {
       log.warn(`  matrix chunk ${c + 1}/${chunks.length} error: ${(err as Error).message}`);
     }
@@ -269,24 +272,24 @@ async function matrixPass(
 // --- Tier 2: per-leg routes for listings within the transit-time gate ---
 
 async function routesPass(
-  db: DatabaseSync,
+  db: Client,
   headers: Record<string, string>,
   office: { id: string; coords: { lat: number; lng: number } },
   legGateMin: number,
   out: EnrichResult,
 ): Promise<void> {
-  const pending = db
-    .prepare(
-      "SELECT id, lat, lon FROM listings WHERE status = 'active' AND lat IS NOT NULL AND commute_route IS NULL AND commute_min IS NOT NULL AND commute_min <= ?",
-    )
-    .all(legGateMin) as { id: string; lat: number; lon: number }[];
+  const pending = rowsToObjects<{ id: string; lat: number; lon: number }>(
+    await db.execute({
+      sql: "SELECT id, lat, lon FROM listings WHERE status = 'active' AND lat IS NOT NULL AND commute_route IS NULL AND commute_min IS NOT NULL AND commute_min <= ?",
+      args: [legGateMin],
+    }),
+  );
   if (pending.length === 0) return;
 
   log.info(
     `Routes: fetching leg breakdown for ${pending.length} listing(s) within ${legGateMin} min…`,
   );
   const arrivalTime = nextTuesdayMorning();
-  const setRoute = db.prepare("UPDATE listings SET commute_route = ? WHERE id = ?");
   const batches = chunk(pending, ROUTES_BATCH);
 
   for (let b = 0; b < batches.length; b++) {
@@ -310,6 +313,7 @@ async function routesPass(
         log.warn(`  routes batch ${b + 1}/${batches.length}: giving up after retries`);
         continue;
       }
+      const updates: InStatement[] = [];
       for (const result of data.results ?? []) {
         const listingId = result.search_id.replace(/^r:/, "");
         const props = result.locations?.[0]?.properties?.[0];
@@ -320,9 +324,13 @@ async function routesPass(
           legs: buildLegs(props.route.parts),
           ...(geometry.length > 1 ? { geometry } : {}),
         };
-        setRoute.run(JSON.stringify(route), listingId);
+        updates.push({
+          sql: "UPDATE listings SET commute_route = ? WHERE id = ?",
+          args: [JSON.stringify(route), listingId],
+        });
         out.legs++;
       }
+      if (updates.length > 0) await db.batch(updates, "write");
     } catch (err) {
       log.warn(`  routes batch ${b + 1}/${batches.length} error: ${(err as Error).message}`);
     }
@@ -412,10 +420,10 @@ export function formatLegs(legs: CommuteLeg[]): string {
     .join(" → ");
 }
 
-function ensureColumns(db: DatabaseSync): void {
+async function ensureColumns(db: Client): Promise<void> {
   for (const col of ["commute_min INTEGER", "commute_route TEXT"]) {
     try {
-      db.exec(`ALTER TABLE listings ADD COLUMN ${col}`);
+      await db.execute(`ALTER TABLE listings ADD COLUMN ${col}`);
     } catch {
       /* already exists */
     }

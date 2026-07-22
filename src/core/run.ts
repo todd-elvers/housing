@@ -19,7 +19,7 @@ export async function ingestSources(
   opts: { notify?: boolean } = {},
 ): Promise<SourceSyncSummary[]> {
   const resolvedDbPath = dbPath ?? process.env.HOUSING_DB ?? "data/housing.db";
-  const store = new Store(resolvedDbPath);
+  const store = await Store.create(resolvedDbPath);
 
   const enabled = sources.filter((source) => {
     const state = source.enabled();
@@ -70,7 +70,7 @@ function runSource(store: Store, source: SourceContract): Effect.Effect<SourceSy
       heartbeat.unref?.();
       try {
         const listings = await source.fetch();
-        const summary = store.syncSource(source.name, listings, source.snapshotComplete);
+        const summary = await store.syncSource(source.name, listings, source.snapshotComplete);
         log.info(`✓ ${source.name}: ${listings.length} listings in ${Date.now() - started}ms`);
         return summary;
       } finally {

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { existsSync } from "node:fs";
 import { defineTool } from "../tool.ts";
 import { envSpec } from "../env/spec.ts";
+import { isRemoteDb } from "../core/client.ts";
 import { Store } from "../core/db.ts";
 import { syncDiscord } from "../core/notify.ts";
 
@@ -31,7 +32,16 @@ export default defineTool({
       ),
   }),
   requires: {
-    HOUSING_DB: envSpec(z.string().default("data/housing.db"), "SQLite database path", ""),
+    HOUSING_DB: envSpec(
+      z.string().default("data/housing.db"),
+      "SQLite file path or libsql:// Turso URL",
+      "",
+    ),
+    TURSO_AUTH_TOKEN: envSpec(
+      z.string().optional(),
+      "Turso auth token (required when HOUSING_DB is a libsql:// URL)",
+      "https://docs.turso.tech/cli/db/tokens/create",
+    ),
     DISCORD_WEBHOOK: envSpec(
       z.string().url(),
       "Discord webhook URL — the board is posted here",
@@ -39,12 +49,12 @@ export default defineTool({
     ),
   },
   async run({ input, env, log }) {
-    if (!existsSync(env.HOUSING_DB)) {
+    if (!isRemoteDb(env.HOUSING_DB) && !existsSync(env.HOUSING_DB)) {
       throw new Error(`no database at ${env.HOUSING_DB} — run \`housing ingest\` first`);
     }
-    const store = new Store(env.HOUSING_DB);
+    const store = await Store.create(env.HOUSING_DB);
     try {
-      const cleared = input.reset ? store.clearDiscordState() : 0;
+      const cleared = input.reset ? await store.clearDiscordState() : 0;
       if (input.reset)
         log.print(`· discord: reset posting state (${cleared} message(s) forgotten)`);
       const result = await syncDiscord(store, [], [], input.limit);

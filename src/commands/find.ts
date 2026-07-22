@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { existsSync, readFileSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
 import { defineTool } from "../tool.ts";
+import { openDb, isRemoteDb, rowsToObjects } from "../core/client.ts";
 import { envSpec } from "../env/spec.ts";
 import { log } from "../core/log.ts";
 import { facetPath } from "../core/facet.ts";
@@ -69,7 +69,16 @@ export default defineTool({
     limit: z.coerce.number().default(25).describe("Max results"),
   }),
   requires: {
-    HOUSING_DB: envSpec(z.string().default("data/housing.db"), "SQLite database path", ""),
+    HOUSING_DB: envSpec(
+      z.string().default("data/housing.db"),
+      "SQLite file path or libsql:// Turso URL",
+      "",
+    ),
+    TURSO_AUTH_TOKEN: envSpec(
+      z.string().optional(),
+      "Turso auth token (required when HOUSING_DB is a libsql:// URL)",
+      "https://docs.turso.tech/cli/db/tokens/create",
+    ),
     HOUSING_ANCHOR: envSpec(
       z.string().optional(),
       "Default 'lat,lon' anchor for --near (e.g. office location)",
@@ -77,7 +86,7 @@ export default defineTool({
     ),
   },
   async run({ input, env }) {
-    if (!existsSync(env.HOUSING_DB)) {
+    if (!isRemoteDb(env.HOUSING_DB) && !existsSync(env.HOUSING_DB)) {
       throw new Error(`no database at ${env.HOUSING_DB} — run \`housing ingest\` first`);
     }
     const where = ["status = 'active'"];
@@ -121,13 +130,14 @@ export default defineTool({
       params.push(m, m, m);
     }
 
-    const db = new DatabaseSync(env.HOUSING_DB);
-    const rows = db
-      .prepare(
-        `SELECT source, title, address, neighborhood, price, beds, baths, lat, lon, url, raw, commute_min, commute_route
+    const { client: db } = openDb(env.HOUSING_DB);
+    const rows = rowsToObjects<Row>(
+      await db.execute({
+        sql: `SELECT source, title, address, neighborhood, price, beds, baths, lat, lon, url, raw, commute_min, commute_route
          FROM listings WHERE ${where.join(" AND ")}`,
-      )
-      .all(...params) as unknown as Row[];
+        args: params,
+      }),
+    );
     db.close();
 
     let anchor: { lat: number; lon: number } | null = null;

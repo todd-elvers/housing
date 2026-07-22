@@ -13,3 +13,6 @@ age1y5txpqz0vyyq03yyysmzuyvuyh8uzzpcw30cp5q3twxnwenfzpvs48ts0z
 
 # Conner
 age18r3vk6aecpcd69ey7fhgjylg6z37ksfeff6c497mxgv4nwmnyupq4gsfua
+
+# CI (GitHub Actions — private key lives in the AGE_KEY repo secret)
+age1a28j4ja64nee86dx8zr8xa26vq5m5u0kf3pj55cy87jqx8tgru3qvyqd6d
