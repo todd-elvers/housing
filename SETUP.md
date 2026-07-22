@@ -53,7 +53,12 @@ Sanity check:
 ./housing sources                     # enabled/disabled + why
 ```
 
-`./housing <args>` == `mise run housing -- <args>`. The DB lands at `data/housing.db`.
+`./housing <args>` == `mise run housing -- <args>`. `HOUSING_DB` picks the database:
+the team default (from `.env.age`) is the shared Turso DB (`libsql://…` +
+`TURSO_AUTH_TOKEN`); override to a local file in `.env.local` (e.g.
+`HOUSING_DB=data/dev.db`) for offline hacking. ⚠️ The shared DB has ONE writer —
+the hourly GitHub Actions ingest. Don't run `ingest` against it by hand unless
+you know the board state is yours to mutate; `find`/`search` are always safe.
 The first run per source **seeds** silently (no events); later runs report
 new/changed/removed. Every run writes a timestamped `./housing.log` (truncated each
 run); `--verbose` adds debug detail to stdout.
@@ -274,6 +279,7 @@ scripts/homeharvest_fetch.py   Python bridge (uv)
 - **Craigslist returns 0 / 403** → you're on a datacenter IP; run from a residential connection.
 - **A source says "disabled — set X"** → add `X` to `.env` (`.env.example` says where to get it).
 - **`aube: command not found`** → run `mise install` first, or use `./housing` / `mise exec -- aube …`.
-- **`node:sqlite` experimental warning** → silenced via `NODE_OPTIONS` in `mise.toml` (needs node ≥ 22.5, pinned).
+- **`no database at …`** → `HOUSING_DB` points at a missing local file; pull the team `.env.age` (Turso URL) or run `housing ingest` against a local path first.
+- **Remote DB auth errors** → `TURSO_AUTH_TOKEN` missing/expired for the `libsql://` URL in `HOUSING_DB`; both live in `.env.age`.
 - **A new command doesn't appear** → it must `default export` a `defineTool`/`defineSource` and not start with `_`; run `mise run typecheck` (lazy imports surface file errors only when that command runs, so typecheck the whole graph).
 - **Read the last run in detail** → `./housing.log` (full detail always, even when stdout was quiet or `--json`).

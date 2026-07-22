@@ -13,10 +13,6 @@ age = "1.3.1"   # secrets: decrypt the committed .env.age at startup with your ~
 # Pin exact resolved tool versions in mise.lock so every machine installs identical versions.
 lockfile = true
 
-[env]
-# node:sqlite is "experimental" in node 22 — silence the per-run warning.
-NODE_OPTIONS = "--disable-warning=ExperimentalWarning"
-
 [tasks.bootstrap]
 description = "Install tool versions + JS/Python deps (one-shot setup from a clean clone)"
 run = [
@@ -57,8 +53,12 @@ description = "Format, then lint + typecheck"
 run = ["mise run format", "mise run lint", "mise run typecheck"]
 
 [tasks.db]
-description = "Open the SQLite DB in the sqlite3 shell"
-run = "sqlite3 data/housing.db"
+description = "Open a SQL shell on the shared Turso DB (needs the turso CLI + TURSO_API_TOKEN)"
+run = "turso db shell housing"
+
+[tasks."db:local"]
+description = "Open a local SQLite file in the sqlite3 shell (default: the pre-Turso backup)"
+run = 'sqlite3 "${1:-data/housing.db.pre-turso.bak}"'
 
 [tasks."secrets:keygen"]
 description = "Generate your age identity (~/.age/key.txt) and print your public key for .age.public-keys"

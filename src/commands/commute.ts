@@ -2,6 +2,7 @@ import { z } from "zod";
 import { existsSync } from "node:fs";
 import { defineTool } from "../tool.ts";
 import { envSpec } from "../env/spec.ts";
+import { isRemoteDb } from "../core/client.ts";
 import { enrichCommutes } from "../core/commute.ts";
 
 // Recompute door-to-door commute routes for the ingested listings. Normally this
@@ -29,7 +30,16 @@ export default defineTool({
       ),
   }),
   requires: {
-    HOUSING_DB: envSpec(z.string().default("data/housing.db"), "SQLite database path", ""),
+    HOUSING_DB: envSpec(
+      z.string().default("data/housing.db"),
+      "SQLite file path or libsql:// Turso URL",
+      "",
+    ),
+    TURSO_AUTH_TOKEN: envSpec(
+      z.string().optional(),
+      "Turso auth token (required when HOUSING_DB is a libsql:// URL)",
+      "https://docs.turso.tech/cli/db/tokens/create",
+    ),
     HOUSING_ANCHOR: envSpec(
       z.string().regex(/^-?\d+\.?\d*,-?\d+\.?\d*$/),
       "Office anchor 'lat,lon' — routes are computed to here",
@@ -47,7 +57,7 @@ export default defineTool({
     ),
   },
   async run({ input, env, log }) {
-    if (!existsSync(env.HOUSING_DB)) {
+    if (!isRemoteDb(env.HOUSING_DB) && !existsSync(env.HOUSING_DB)) {
       throw new Error(`no database at ${env.HOUSING_DB} — run \`housing ingest\` first`);
     }
 

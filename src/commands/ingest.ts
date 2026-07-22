@@ -18,13 +18,28 @@ export default defineTool({
       .boolean()
       .optional()
       .describe("Include tier-2 paid/managed sources (they cost money per call)"),
+    skip: z
+      .string()
+      .optional()
+      .describe(
+        "Comma-separated source names to exclude this run (e.g. craigslist, which blocks datacenter IPs in CI)",
+      ),
     noNotify: z.coerce
       .boolean()
       .default(false)
       .describe("Refresh the DB only — don't post/edit the Discord board this run"),
   }),
   requires: {
-    HOUSING_DB: envSpec(z.string().default("data/housing.db"), "SQLite database path", ""),
+    HOUSING_DB: envSpec(
+      z.string().default("data/housing.db"),
+      "SQLite file path or libsql:// Turso URL",
+      "",
+    ),
+    TURSO_AUTH_TOKEN: envSpec(
+      z.string().optional(),
+      "Turso auth token (required when HOUSING_DB is a libsql:// URL)",
+      "https://docs.turso.tech/cli/db/tokens/create",
+    ),
     DISCORD_WEBHOOK: envSpec(
       z.string().url().optional(),
       "Discord webhook URL (optional; posts a digest to the shared channel on new/changed/removed)",
@@ -33,6 +48,7 @@ export default defineTool({
   },
   async run({ input, env }) {
     let sources = await loadSources();
+    const allNames = new Set(sources.map((s) => s.name));
     if (input.source) {
       const want = new Set(
         input.source
@@ -46,6 +62,17 @@ export default defineTool({
       sources = sources.filter((s) => want.has(s.name)); // explicit names → any tier
     } else if (!input.paid) {
       sources = sources.filter((s) => !isPaid(s)); // default: free sources only, never spend money
+    }
+    if (input.skip) {
+      const drop = new Set(
+        input.skip
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      );
+      const unknown = [...drop].filter((n) => !allNames.has(n));
+      if (unknown.length) throw new Error(`unknown --skip source(s): ${unknown.join(", ")}`);
+      sources = sources.filter((s) => !drop.has(s.name));
     }
     const summaries = await ingestSources(sources, env.HOUSING_DB, { notify: !input.noNotify });
     return {

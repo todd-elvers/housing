@@ -1,0 +1,59 @@
+name: ingest
+
+on:
+  schedule:
+    # Hourly 8am–8pm Pacific (PDT = UTC-7): 15:23–23:23 + 00:23–03:23 UTC.
+    # Offset to :23 to dodge the top-of-hour cron rush. NB: fixed to PDT — runs
+    # shift an hour later in local time when PST returns in November.
+    - cron: "23 15-23 * * *"
+    - cron: "23 0-3 * * *"
+  workflow_dispatch:
+
+# One writer at a time — a mid-flight DB sync must never overlap with the next.
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      # Installs node/aube/python/uv/age at the versions pinned in mise.toml.
+      - uses: jdx/mise-action@v3
+
+      - name: Install JS deps
+        run: mise exec -- aube install
+
+      - name: Install Python deps (homeharvest source)
+        run: mise exec -- uv sync
+
+      # AGE_KEY is the CI identity's private key — the ONLY GitHub secret.
+      # Everything else (Turso URL/token, Discord webhooks, API keys) is decrypted
+      # from the committed .env.age at startup.
+      - name: Install age identity
+        env:
+          AGE_KEY: ${{ secrets.AGE_KEY }}
+        run: |
+          mkdir -p ~/.age
+          printf '%s\n' "$AGE_KEY" > ~/.age/key.txt
+          chmod 600 ~/.age/key.txt
+
+      # Free sources only (no --paid: metered APIs stay a deliberate, manual act).
+      # craigslist is skipped — it 403s datacenter IPs like GitHub's runners.
+      - name: Ingest
+        id: ingest
+        run: |
+          set -o pipefail
+          mise exec -- aube exec tsx src/main.ts ingest --json --skip craigslist | tee ingest-result.json
+
+      - name: Report errors to Discord
+        if: always()
+        env:
+          INGEST_OUTCOME: ${{ steps.ingest.outcome }}
+        run: mise exec -- aube exec tsx scripts/ci-report.ts ingest-result.json

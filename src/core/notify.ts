@@ -115,7 +115,9 @@ function reconcileDiscord(
     const paceMs = intEnv("HOUSING_NOTIFY_PACE_MS", DEFAULT_PACE_MS);
 
     // Edits + delists only apply to listings we've already posted (have a message id).
-    const trackedRows = store.getCards([...changed, ...removed].map((e) => e.listingId));
+    const trackedRows = yield* Effect.promise(() =>
+      store.getCards([...changed, ...removed].map((e) => e.listingId)),
+    );
     const edits = changed
       .map((e) => ({ row: trackedRows.get(e.listingId), detail: e.detail }))
       .filter((x): x is { row: ListingCard; detail: string } => !!x.row?.discord_message_id);
@@ -125,22 +127,23 @@ function reconcileDiscord(
     // New posts come from the DB queue (not events): the whole eligible set,
     // newest-first. perRun ≤ 0 (default) drains everything; a positive value caps
     // it so the backlog trickles across runs. -1 → SQLite unlimited.
-    const posts = store.pendingPosts(maxMin, perRun > 0 ? perRun : -1);
+    const posts = yield* Effect.promise(() => store.pendingPosts(maxMin, perRun > 0 ? perRun : -1));
 
     if (edits.length + delists.length + posts.length === 0) {
-      return { posted: 0, edited: 0, delisted: 0, remaining: store.countPendingPosts(maxMin) };
+      const remaining = yield* Effect.promise(() => store.countPendingPosts(maxMin));
+      return { posted: 0, edited: 0, delisted: 0, remaining };
     }
 
     const anchor = parseAnchor(process.env.HOUSING_ANCHOR);
     const tileCache: TileCache = new Map();
     const { renderCard, resolvePhotos } = yield* Effect.promise(() => import("./card.ts"));
     const render = (row: ListingCard, kind: "new" | "changed", detail: string | null) =>
-      Effect.promise(() =>
+      Effect.promise(async () =>
         toCard(
-          store.enrichUnit(row),
+          await store.enrichUnit(row),
           kind,
           detail,
-          store.unitSiblings(row.id),
+          await store.unitSiblings(row.id),
           anchor,
           tileCache,
           renderCard,
@@ -166,8 +169,8 @@ function reconcileDiscord(
           // Drop our tracking so the card won't be retried, and so a still-active
           // sibling of the same unit becomes eligible to re-post in its place.
           Effect.tap(() =>
-            Effect.sync(() => {
-              store.clearDiscordMessage(row.id);
+            Effect.promise(async () => {
+              await store.clearDiscordMessage(row.id);
               delisted++;
             }),
           ),
@@ -178,15 +181,17 @@ function reconcileDiscord(
           const card = yield* render(row, "new", null);
           // Route to the "<neighborhood> · <beds>" forum thread, creating on first use.
           const group = `${card.neighborhood ?? OTHER_THREAD} · ${bedBucket(row.beds)}`;
-          const existing = store.getThread(group);
+          const existing = yield* Effect.promise(() => store.getThread(group));
           const ref = yield* postCard(
             webhook,
             card,
             existing ? { threadId: existing } : { threadName: group },
           );
           if (ref) {
-            if (!existing) store.setThread(group, ref.threadId);
-            store.setDiscordMessage(row.id, ref.messageId, ref.threadId);
+            if (!existing) yield* Effect.promise(() => store.setThread(group, ref.threadId));
+            yield* Effect.promise(() =>
+              store.setDiscordMessage(row.id, ref.messageId, ref.threadId),
+            );
             posted++;
           }
         }),
@@ -203,7 +208,7 @@ function reconcileDiscord(
     const limiter = yield* RateLimiter.make({ limit: 1, interval: Duration.millis(paceMs) });
     yield* Effect.forEach(writes, (w) => limiter(w), { concurrency: 1 });
 
-    const remaining = store.countPendingPosts(maxMin);
+    const remaining = yield* Effect.promise(() => store.countPendingPosts(maxMin));
     log.print(
       `→ discord: ${posted} posted, ${edited} edited, ${delisted} deleted` +
         (remaining > 0 ? ` (${remaining} still queued)` : ""),

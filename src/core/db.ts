@@ -1,6 +1,5 @@
-import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import type { Client, InStatement } from "@libsql/client";
+import { openDb, rowsToObjects, chunkArray } from "./client.ts";
 import { contentHash, normalizeAddress } from "./normalize.ts";
 import type { ListingEvent, RawListing, SourceSyncSummary } from "./types.ts";
 
@@ -67,34 +66,41 @@ function staleMs(): number {
   return (Number.isFinite(d) && d > 0 ? d : DEFAULT_STALE_DAYS) * 86_400_000;
 }
 
-export class Store {
-  private db: DatabaseSync;
+// Statements per batch() call. Each batch is one implicit transaction; a
+// listing's event INSERT is always kept in the same chunk as its upsert so a
+// mid-sync failure can't record an event without its row (re-runs are idempotent
+// either way — an unchanged content_hash produces no second event).
+const BATCH_CHUNK = 200;
 
-  constructor(path = process.env.HOUSING_DB || "data/housing.db") {
-    mkdirSync(dirname(path), { recursive: true });
-    this.db = new DatabaseSync(path);
-    this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
-    // Expose the JS address normalizer to SQL so the dedup key is one source of
-    // truth and can self-heal the stored column (below).
-    this.db.function("norm_addr", { deterministic: true }, (a) =>
-      normalizeAddress(a as string | null),
-    );
-    this.migrate();
+export class Store {
+  private constructor(private db: Client) {}
+
+  /**
+   * Open the DB (local file path or remote libsql:// URL — see client.ts) and
+   * run migrations. All I/O is async now, so construction goes through here.
+   */
+  static async create(path = process.env.HOUSING_DB || "data/housing.db"): Promise<Store> {
+    const { client, isRemote } = openDb(path);
+    const store = new Store(client);
+    // WAL only applies to a local file; PRAGMAs are unreliable over remote sqld.
+    if (!isRemote) await client.execute("PRAGMA journal_mode = WAL");
+    await store.migrate();
+    return store;
   }
 
-  private migrate(): void {
+  private async migrate(): Promise<void> {
     // discord_threads was briefly keyed by `neighborhood`; it's a disposable cache,
     // so if the old shape exists, drop it and let the CREATE below rebuild it keyed
-    // by the (neighborhood + bed-count) group.
-    try {
-      const cols = this.db.prepare("PRAGMA table_info(discord_threads)").all() as {
-        name: string;
-      }[];
-      if (cols.some((c) => c.name === "neighborhood")) this.db.exec("DROP TABLE discord_threads");
-    } catch {
-      /* table absent on a fresh DB */
+    // by the (neighborhood + bed-count) group. (sqlite_master instead of PRAGMA
+    // table_info — PRAGMAs don't travel over remote connections.)
+    const legacy = await this.db.execute(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'discord_threads'",
+    );
+    const legacySql = legacy.rows[0]?.["sql"];
+    if (typeof legacySql === "string" && legacySql.includes("neighborhood")) {
+      await this.db.execute("DROP TABLE discord_threads");
     }
-    this.db.exec(`
+    await this.db.executeMultiple(`
       CREATE TABLE IF NOT EXISTS listings (
         id            TEXT PRIMARY KEY,      -- "<source>:<sourceId>"
         source        TEXT NOT NULL,
@@ -149,32 +155,46 @@ export class Store {
       "discord_thread_id TEXT", // the neighborhood thread the card lives in
     ]) {
       try {
-        this.db.exec(`ALTER TABLE listings ADD COLUMN ${col}`);
+        await this.db.execute(`ALTER TABLE listings ADD COLUMN ${col}`);
       } catch {
         /* already present */
       }
     }
-    // Keep the dedup key in sync with the current normalizeAddress logic (only
-    // rewrites rows whose key actually changed, so it's a no-op after the first run).
-    this.db.exec(
-      "UPDATE listings SET address_norm = norm_addr(address) WHERE address IS NOT NULL AND address_norm IS NOT norm_addr(address)",
+    // Keep the dedup key in sync with the current normalizeAddress logic. Computed
+    // in JS (libSQL has no custom SQL functions); only rewrites rows whose key
+    // actually changed, so it's a no-op after the first run.
+    const rs = await this.db.execute(
+      "SELECT id, address, address_norm FROM listings WHERE address IS NOT NULL",
     );
+    const fixes: InStatement[] = [];
+    for (const row of rowsToObjects<{ id: string; address: string; address_norm: string | null }>(
+      rs,
+    )) {
+      const want = normalizeAddress(row.address);
+      if (want !== row.address_norm) {
+        fixes.push({
+          sql: "UPDATE listings SET address_norm = ? WHERE id = ?",
+          args: [want, row.id],
+        });
+      }
+    }
+    for (const chunk of chunkArray(fixes, BATCH_CHUNK)) await this.db.batch(chunk, "write");
   }
 
   /**
    * Other active listings for the same unit (same address_norm) as `id` — the
    * cross-source duplicates we deduped away — so the card can link to them.
    */
-  unitSiblings(id: string): { source: string; url: string }[] {
-    return this.db
-      .prepare(
-        `SELECT o.source, o.url
+  async unitSiblings(id: string): Promise<{ source: string; url: string }[]> {
+    const rs = await this.db.execute({
+      sql: `SELECT o.source, o.url
            FROM listings p
            JOIN listings o ON o.address_norm = p.address_norm AND o.id <> p.id
           WHERE p.id = ? AND p.address_norm IS NOT NULL AND o.status = 'active'
           ORDER BY ${sourceRankCase("o.source")}, o.id`,
-      )
-      .all(id) as { source: string; url: string }[];
+      args: [id],
+    });
+    return rowsToObjects(rs);
   }
 
   /**
@@ -182,7 +202,7 @@ export class Store {
    * the best-ranked sibling in the same unit that does have them — "most-populated
    * data for the address". Returns the row unchanged if nothing to borrow.
    */
-  enrichUnit(row: ListingCard): ListingCard {
+  async enrichUnit(row: ListingCard): Promise<ListingCard> {
     if (row.sqft != null && row.beds != null && row.baths != null && row.property_type != null) {
       return row;
     }
@@ -191,20 +211,18 @@ export class Store {
          WHERE o.address_norm = p.address_norm AND o.id <> p.id
            AND o.status = 'active' AND o.${field} IS NOT NULL
          ORDER BY ${sourceRankCase("o.source")} LIMIT 1)`;
-    const r = this.db
-      .prepare(
-        `SELECT ${best("sqft")} AS sqft, ${best("beds")} AS beds,
+    const rs = await this.db.execute({
+      sql: `SELECT ${best("sqft")} AS sqft, ${best("beds")} AS beds,
                 ${best("baths")} AS baths, ${best("property_type")} AS property_type
            FROM listings p WHERE p.id = ? AND p.address_norm IS NOT NULL`,
-      )
-      .get(row.id) as
-      | {
-          sqft: number | null;
-          beds: number | null;
-          baths: number | null;
-          property_type: string | null;
-        }
-      | undefined;
+      args: [row.id],
+    });
+    const r = rowsToObjects<{
+      sqft: number | null;
+      beds: number | null;
+      baths: number | null;
+      property_type: string | null;
+    }>(rs)[0];
     if (!r) return row;
     return {
       ...row,
@@ -216,36 +234,37 @@ export class Store {
   }
 
   /** Record the Discord message (and its thread) we posted for a listing. */
-  setDiscordMessage(id: string, messageId: string, threadId: string | null): void {
-    this.db
-      .prepare("UPDATE listings SET discord_message_id = ?, discord_thread_id = ? WHERE id = ?")
-      .run(messageId, threadId, id);
+  async setDiscordMessage(id: string, messageId: string, threadId: string | null): Promise<void> {
+    await this.db.execute({
+      sql: "UPDATE listings SET discord_message_id = ?, discord_thread_id = ? WHERE id = ?",
+      args: [messageId, threadId, id],
+    });
   }
 
   /** Forget the Discord message for one listing (after its card is deleted). */
-  clearDiscordMessage(id: string): void {
-    this.db
-      .prepare(
-        "UPDATE listings SET discord_message_id = NULL, discord_thread_id = NULL WHERE id = ?",
-      )
-      .run(id);
+  async clearDiscordMessage(id: string): Promise<void> {
+    await this.db.execute({
+      sql: "UPDATE listings SET discord_message_id = NULL, discord_thread_id = NULL WHERE id = ?",
+      args: [id],
+    });
   }
 
   /** The Discord thread id for a group, or null if none has been created yet. */
-  getThread(groupKey: string): string | null {
-    const row = this.db
-      .prepare("SELECT thread_id FROM discord_threads WHERE group_key = ?")
-      .get(groupKey) as { thread_id: string } | undefined;
-    return row?.thread_id ?? null;
+  async getThread(groupKey: string): Promise<string | null> {
+    const rs = await this.db.execute({
+      sql: "SELECT thread_id FROM discord_threads WHERE group_key = ?",
+      args: [groupKey],
+    });
+    const v = rs.rows[0]?.["thread_id"];
+    return typeof v === "string" ? v : null;
   }
 
   /** Remember the thread we created for a group. */
-  setThread(groupKey: string, threadId: string): void {
-    this.db
-      .prepare(
-        "INSERT INTO discord_threads (group_key, thread_id) VALUES (?,?) ON CONFLICT(group_key) DO UPDATE SET thread_id=?",
-      )
-      .run(groupKey, threadId, threadId);
+  async setThread(groupKey: string, threadId: string): Promise<void> {
+    await this.db.execute({
+      sql: "INSERT INTO discord_threads (group_key, thread_id) VALUES (?,?) ON CONFLICT(group_key) DO UPDATE SET thread_id=?",
+      args: [groupKey, threadId, threadId],
+    });
   }
 
   /**
@@ -253,14 +272,12 @@ export class Store {
    * the neighborhood→thread map — so the next sync re-posts the board from
    * scratch. Leaves listings + commute data untouched.
    */
-  clearDiscordState(): number {
-    const info = this.db
-      .prepare(
-        "UPDATE listings SET discord_message_id = NULL, discord_thread_id = NULL WHERE discord_message_id IS NOT NULL",
-      )
-      .run();
-    this.db.prepare("DELETE FROM discord_threads").run();
-    return Number(info.changes ?? 0);
+  async clearDiscordState(): Promise<number> {
+    const rs = await this.db.execute(
+      "UPDATE listings SET discord_message_id = NULL, discord_thread_id = NULL WHERE discord_message_id IS NOT NULL",
+    );
+    await this.db.execute("DELETE FROM discord_threads");
+    return rs.rowsAffected;
   }
 
   /**
@@ -268,52 +285,115 @@ export class Store {
    * yet posted. Newest-first (so fresh listings surface promptly) and limited so
    * the whole eligible set — backlog included — trickles out across runs.
    */
-  pendingPosts(maxCommuteMin: number, limit: number): ListingCard[] {
-    return this.db
-      .prepare(
-        `${RANKED_ELIGIBLE}
+  async pendingPosts(maxCommuteMin: number, limit: number): Promise<ListingCard[]> {
+    const rs = await this.db.execute({
+      sql: `${RANKED_ELIGIBLE}
          SELECT p.id, p.source, p.url, p.title, p.address, p.neighborhood, p.lat, p.lon,
                 p.price, p.beds, p.baths, p.sqft, p.property_type, p.posted_at, p.commute_min,
                 p.commute_route, p.raw, p.discord_message_id, p.discord_thread_id
            ${BEST_UNPOSTED}
           ORDER BY p.first_seen DESC
           LIMIT ?`,
-      )
-      .all(maxCommuteMin, limit) as unknown as ListingCard[];
+      args: [maxCommuteMin, limit],
+    });
+    return rowsToObjects<ListingCard>(rs);
   }
 
   /** Count of units still awaiting their (best-source) card, within the commute cap. */
-  countPendingPosts(maxCommuteMin: number): number {
-    const row = this.db
-      .prepare(`${RANKED_ELIGIBLE} SELECT COUNT(*) AS n ${BEST_UNPOSTED}`)
-      .get(maxCommuteMin) as { n: number };
-    return row.n;
-  }
-
-  private countForSource(source: string): number {
-    const row = this.db
-      .prepare("SELECT COUNT(*) AS n FROM listings WHERE source = ?")
-      .get(source) as { n: number };
-    return row.n;
+  async countPendingPosts(maxCommuteMin: number): Promise<number> {
+    const rs = await this.db.execute({
+      sql: `${RANKED_ELIGIBLE} SELECT COUNT(*) AS n ${BEST_UNPOSTED}`,
+      args: [maxCommuteMin],
+    });
+    return Number(rs.rows[0]?.["n"] ?? 0);
   }
 
   /**
    * Reconcile a fresh fetch for one source against stored state.
    * Returns counts + the new/changed/removed events. On a source's first-ever
    * run everything is "seeded" silently (no events) to avoid a notification flood.
+   *
+   * Network-friendly shape: ONE read of the source's stored rows, the whole diff
+   * in JS, then chunked transactional batch() writes — instead of a per-listing
+   * read/write round trip inside a long-held transaction.
    */
-  syncSource(source: string, listings: RawListing[], snapshotComplete: boolean): SourceSyncSummary {
+  async syncSource(
+    source: string,
+    listings: RawListing[],
+    snapshotComplete: boolean,
+  ): Promise<SourceSyncSummary> {
     const runTs = Date.now();
-    const seedMode = this.countForSource(source) === 0;
+    const existingRs = await this.db.execute({
+      sql: `SELECT id, content_hash, price, beds, baths, sqft, property_type, title, status,
+                   last_seen, url, neighborhood
+              FROM listings WHERE source = ?`,
+      args: [source],
+    });
+    const existing = new Map<string, StoredRow>();
+    for (const row of rowsToObjects<StoredRow>(existingRs)) existing.set(row.id, row);
+    const seedMode = existing.size === 0;
+
     const events: ListingEvent[] = [];
+    const stmts: InStatement[] = [];
+    const seen = new Set<string>();
     let newCount = 0;
     let changedCount = 0;
     let seeded = 0;
 
-    const getStmt = this.db.prepare(
-      "SELECT content_hash, price, beds, baths, sqft, property_type, title, status FROM listings WHERE id = ?",
-    );
-    const upsert = this.db.prepare(`
+    const insertEvent = (listingId: string, type: string, detail: string): InStatement => ({
+      sql: "INSERT INTO events (listing_id, source, type, detail, created_at) VALUES (?,?,?,?,?)",
+      args: [listingId, source, type, detail, runTs],
+    });
+
+    for (const l of listings) {
+      const id = `${source}:${l.sourceId}`;
+      if (seen.has(id)) continue; // duplicate within one fetch — first occurrence wins
+      seen.add(id);
+      const hash = contentHash(l);
+      const old = existing.get(id);
+
+      if (!old) {
+        if (!seedMode) {
+          newCount++;
+          const ev: ListingEvent = {
+            listingId: id,
+            source,
+            type: "new",
+            detail: priceLabel(l.price),
+            url: l.url,
+            title: l.title ?? null,
+            price: l.price ?? null,
+            beds: l.beds ?? null,
+            baths: l.baths ?? null,
+            neighborhood: l.neighborhood ?? null,
+          };
+          events.push(ev);
+          stmts.push(insertEvent(id, "new", ev.detail));
+        } else {
+          seeded++;
+        }
+      } else if (old.content_hash !== hash || old.status === "removed") {
+        changedCount++;
+        const detail =
+          old.status === "removed" ? `relisted ${priceLabel(l.price)}` : describeChanges(old, l);
+        const ev: ListingEvent = {
+          listingId: id,
+          source,
+          type: "changed",
+          detail,
+          url: l.url,
+          title: l.title ?? null,
+          price: l.price ?? null,
+          beds: l.beds ?? null,
+          baths: l.baths ?? null,
+          neighborhood: l.neighborhood ?? null,
+        };
+        events.push(ev);
+        stmts.push(insertEvent(id, "changed", detail));
+      }
+
+      stmts.push({
+        sql: `
       INSERT INTO listings (id, source, source_id, url, title, address, address_norm,
         city, neighborhood, lat, lon, price, beds, baths, sqft, property_type,
         status, posted_at, content_hash, raw, first_seen, last_seen)
@@ -329,63 +409,8 @@ export class Store {
         -- drop cached commute data when the coordinates move so it's recomputed
         commute_min=CASE WHEN lat IS NOT @lat OR lon IS NOT @lon THEN NULL ELSE commute_min END,
         commute_route=CASE WHEN lat IS NOT @lat OR lon IS NOT @lon THEN NULL ELSE commute_route END
-    `);
-    upsert.setAllowBareNamedParameters(true);
-    const insertEvent = this.db.prepare(
-      "INSERT INTO events (listing_id, source, type, detail, created_at) VALUES (?,?,?,?,?)",
-    );
-
-    const tx = this.db.prepare("BEGIN");
-    tx.run();
-    try {
-      for (const l of listings) {
-        const id = `${source}:${l.sourceId}`;
-        const hash = contentHash(l);
-        const existing = getStmt.get(id) as StoredForDiff | undefined;
-
-        if (!existing) {
-          if (!seedMode) {
-            newCount++;
-            const ev: ListingEvent = {
-              listingId: id,
-              source,
-              type: "new",
-              detail: priceLabel(l.price),
-              url: l.url,
-              title: l.title ?? null,
-              price: l.price ?? null,
-              beds: l.beds ?? null,
-              baths: l.baths ?? null,
-              neighborhood: l.neighborhood ?? null,
-            };
-            events.push(ev);
-            insertEvent.run(id, source, "new", ev.detail, runTs);
-          } else {
-            seeded++;
-          }
-        } else if (existing.content_hash !== hash || existing.status === "removed") {
-          changedCount++;
-          const detail =
-            existing.status === "removed"
-              ? `relisted ${priceLabel(l.price)}`
-              : describeChanges(existing, l);
-          const ev: ListingEvent = {
-            listingId: id,
-            source,
-            type: "changed",
-            detail,
-            url: l.url,
-            title: l.title ?? null,
-            price: l.price ?? null,
-            beds: l.beds ?? null,
-            baths: l.baths ?? null,
-            neighborhood: l.neighborhood ?? null,
-          };
-          events.push(ev);
-          insertEvent.run(id, source, "changed", detail, runTs);
-        }
-
-        upsert.run({
+    `,
+        args: {
           id,
           source,
           source_id: l.sourceId,
@@ -407,64 +432,50 @@ export class Store {
           raw: l.raw === undefined ? null : JSON.stringify(l.raw),
           first_seen: runTs,
           last_seen: runTs,
-        });
-      }
-
-      // Removal sweep: an active listing not seen recently enough is "gone". A
-      // complete-snapshot source removes anything it didn't return THIS run
-      // (absence ⇒ delisted). A partial/feed source instead waits until a listing
-      // hasn't shown up for HOUSING_STALE_DAYS — absence only means gone once it's
-      // been missing across several runs. Skipped while seeding (no baseline yet).
-      let removedCount = 0;
-      if (!seedMode) {
-        const cutoff = snapshotComplete ? runTs : runTs - staleMs();
-        const stale = this.db
-          .prepare(
-            "SELECT id, url, title, price, beds, baths, neighborhood FROM listings WHERE source = ? AND status = 'active' AND last_seen < ?",
-          )
-          .all(source, cutoff) as {
-          id: string;
-          url: string;
-          title: string | null;
-          price: number | null;
-          beds: number | null;
-          baths: number | null;
-          neighborhood: string | null;
-        }[];
-        const markRemoved = this.db.prepare("UPDATE listings SET status = 'removed' WHERE id = ?");
-        for (const s of stale) {
-          markRemoved.run(s.id);
-          insertEvent.run(s.id, source, "removed", "no longer listed", runTs);
-          events.push({
-            listingId: s.id,
-            source,
-            type: "removed",
-            detail: "no longer listed",
-            url: s.url,
-            title: s.title,
-            price: s.price,
-            beds: s.beds,
-            baths: s.baths,
-            neighborhood: s.neighborhood,
-          });
-          removedCount++;
-        }
-      }
-
-      this.db.prepare("COMMIT").run();
-      return {
-        source,
-        fetched: listings.length,
-        seeded,
-        newCount,
-        changedCount,
-        removedCount,
-        events,
-      };
-    } catch (err) {
-      this.db.prepare("ROLLBACK").run();
-      throw err;
+        },
+      });
     }
+
+    // Removal sweep: an active listing not seen recently enough is "gone". A
+    // complete-snapshot source removes anything it didn't return THIS run
+    // (absence ⇒ delisted). A partial/feed source instead waits until a listing
+    // hasn't shown up for HOUSING_STALE_DAYS — absence only means gone once it's
+    // been missing across several runs. Skipped while seeding (no baseline yet).
+    // Computed from the pre-run snapshot: rows fetched this run are excluded via
+    // `seen`, so the stale check matches the old post-upsert semantics.
+    let removedCount = 0;
+    if (!seedMode) {
+      const cutoff = snapshotComplete ? runTs : runTs - staleMs();
+      for (const s of existing.values()) {
+        if (s.status !== "active" || s.last_seen >= cutoff || seen.has(s.id)) continue;
+        stmts.push({ sql: "UPDATE listings SET status = 'removed' WHERE id = ?", args: [s.id] });
+        stmts.push(insertEvent(s.id, "removed", "no longer listed"));
+        events.push({
+          listingId: s.id,
+          source,
+          type: "removed",
+          detail: "no longer listed",
+          url: s.url,
+          title: s.title,
+          price: s.price,
+          beds: s.beds,
+          baths: s.baths,
+          neighborhood: s.neighborhood,
+        });
+        removedCount++;
+      }
+    }
+
+    for (const chunk of chunkArray(stmts, BATCH_CHUNK)) await this.db.batch(chunk, "write");
+    return {
+      source,
+      fetched: listings.length,
+      seeded,
+      newCount,
+      changedCount,
+      removedCount,
+      events,
+    };
   }
 
   /**
@@ -472,18 +483,17 @@ export class Store {
    * time, after commute enrichment has written commute_min/commute_route. Returns
    * rows keyed by id (missing ids are simply absent).
    */
-  getCards(ids: string[]): Map<string, ListingCard> {
+  async getCards(ids: string[]): Promise<Map<string, ListingCard>> {
     const out = new Map<string, ListingCard>();
-    if (ids.length === 0) return out;
-    const stmt = this.db.prepare(
-      `SELECT id, source, url, title, address, neighborhood, lat, lon, price,
+    for (const group of chunkArray(ids, 400)) {
+      const rs = await this.db.execute({
+        sql: `SELECT id, source, url, title, address, neighborhood, lat, lon, price,
               beds, baths, sqft, property_type, posted_at, commute_min, commute_route, raw,
               discord_message_id, discord_thread_id
-         FROM listings WHERE id = ?`,
-    );
-    for (const id of ids) {
-      const row = stmt.get(id) as ListingCard | undefined;
-      if (row) out.set(id, row);
+         FROM listings WHERE id IN (${group.map(() => "?").join(",")})`,
+        args: group,
+      });
+      for (const row of rowsToObjects<ListingCard>(rs)) out.set(row.id, row);
     }
     return out;
   }
@@ -525,8 +535,10 @@ function priceLabel(p?: number | null): string {
   return p ? `$${p.toLocaleString()}/mo` : "price n/a";
 }
 
-/** The stored columns we read back to diff an incoming listing against. */
-interface StoredForDiff {
+/** The stored columns read back to diff an incoming listing against (plus the
+ *  fields the removal sweep needs to build its event without a second read). */
+interface StoredRow {
+  id: string;
   content_hash: string;
   price: number | null;
   beds: number | null;
@@ -535,6 +547,9 @@ interface StoredForDiff {
   property_type: string | null;
   title: string | null;
   status: string;
+  last_seen: number;
+  url: string;
+  neighborhood: string | null;
 }
 
 /**
@@ -543,7 +558,7 @@ interface StoredForDiff {
  * "updated" when the hash flipped on a field we don't surface (e.g. a source's
  * changeTag/lastmod).
  */
-function describeChanges(old: StoredForDiff, l: RawListing): string {
+function describeChanges(old: StoredRow, l: RawListing): string {
   const parts: string[] = [];
   if (old.price != null && l.price != null && old.price !== l.price) {
     const arrow = l.price < old.price ? "↓" : "↑";
