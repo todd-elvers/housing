@@ -18,6 +18,10 @@ export default defineTool({
       .boolean()
       .optional()
       .describe("Include tier-2 paid/managed sources (they cost money per call)"),
+    noNotify: z.coerce
+      .boolean()
+      .default(false)
+      .describe("Refresh the DB only — don't post/edit the Discord board this run"),
   }),
   requires: {
     HOUSING_DB: envSpec(z.string().default("data/housing.db"), "SQLite database path", ""),
@@ -43,7 +47,7 @@ export default defineTool({
     } else if (!input.paid) {
       sources = sources.filter((s) => !isPaid(s)); // default: free sources only, never spend money
     }
-    const summaries = await ingestSources(sources, env.HOUSING_DB);
+    const summaries = await ingestSources(sources, env.HOUSING_DB, { notify: !input.noNotify });
     return {
       sources: summaries.length,
       new: summaries.reduce((n, s) => n + s.newCount, 0),

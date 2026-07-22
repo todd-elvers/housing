@@ -55,6 +55,19 @@ def main() -> None:
         except (TypeError, ValueError):
             return None
 
+    def photo(row):
+        """A single hero-image URL: primary_photo, else the first alt photo."""
+        p = g(row, "primary_photo")
+        if isinstance(p, str) and p.startswith("http"):
+            return p
+        alts = g(row, "alt_photos")
+        if isinstance(alts, str) and alts.strip():
+            first = alts.split(",")[0].strip()
+            return first if first.startswith("http") else None
+        if isinstance(alts, (list, tuple)) and alts and isinstance(alts[0], str):
+            return alts[0]
+        return None
+
     out = []
     for _, row in df.iterrows():
         addr = g(row, "full_street_line", "street")
@@ -72,6 +85,8 @@ def main() -> None:
                 "sqft": num(g(row, "sqft")),
                 "property_type": g(row, "style", "property_type"),
                 "list_date": str(g(row, "list_date") or "") or None,
+                # Realtor.com hero image for the notification card, when present.
+                "primary_photo": photo(row),
             }
         )
 

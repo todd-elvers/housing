@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { defineSource } from "../../source.ts";
 import { envSpec } from "../../env/spec.ts";
-import { httpFetch } from "../../core/http.ts";
+import { httpFetch, HttpError } from "../../core/http.ts";
 import { facet } from "../../core/facet.ts";
 import type { RawListing } from "../../core/types.ts";
 
@@ -209,7 +209,8 @@ async function getToken(id: string, secret: string, ua: string): Promise<string>
   });
   if (!res.ok) {
     // Status only — the Basic credential is in a header and never surfaced.
-    throw new Error(
+    throw new HttpError(
+      res.status,
       `reddit: token request failed (HTTP ${res.status}) — check REDDIT_CLIENT_ID/SECRET`,
     );
   }
@@ -246,8 +247,8 @@ async function fetchSub(
     if (after) params.set("after", after);
     const url = `${API_BASE}/r/${encodeURIComponent(sub)}/search?${params.toString()}`;
     const res = await httpFetch(url, { headers: opts.headers, timeoutMs: 20_000 });
-    if (res.status === 429) throw new Error("rate limited (HTTP 429)");
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (res.status === 429) throw new HttpError(429, "reddit: rate limited (HTTP 429)");
+    if (!res.ok) throw new HttpError(res.status, `reddit: HTTP ${res.status}`);
     const json = (await res.json().catch(() => null)) as RedditListing | null;
     const children = json?.data?.children ?? [];
     if (!children.length) break;

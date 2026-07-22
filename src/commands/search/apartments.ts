@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { defineSource } from "../../source.ts";
 import { envSpec } from "../../env/spec.ts";
-import { httpFetch, stripJsonGuard } from "../../core/http.ts";
+import { httpFetch, stripJsonGuard, HttpError } from "../../core/http.ts";
 import { facet } from "../../core/facet.ts";
 import type { RawListing } from "../../core/types.ts";
 
@@ -129,6 +129,7 @@ export default defineSource({
     let urls = splitUrls(input.listingUrls);
     if (urls.length === 0) {
       const searchUrl = input.url ?? env.APARTMENTS_SEARCH_URL;
+      log.info(`apartments: Apify search (managed anti-bot — can take a few minutes)…`);
       // NB: the `search` action returns 0 results if maxItems is omitted — it must be sent.
       const found = await runActor<SearchItem>(token, {
         action: "search",
@@ -144,6 +145,7 @@ export default defineSource({
     if (urls.length === 0) return [];
 
     // Step 2: scrape the rich building detail for those URLs.
+    log.info(`apartments: Apify detail scrape for ${urls.length} buildings (a few minutes)…`);
     const details = await runActor<DetailItem>(token, {
       action: "details",
       listingUrls: urls.map((url) => ({ url })),
@@ -177,7 +179,8 @@ async function runActor<T>(token: string, inputBody: Record<string, unknown>): P
     timeoutMs: 290_000, // run-sync can take minutes
     retries: 0, // never re-run a paid actor
   });
-  if (!res.ok) throw new Error(`apify apartments (${inputBody.action}) → HTTP ${res.status}`);
+  if (!res.ok)
+    throw new HttpError(res.status, `apify apartments (${inputBody.action}) → HTTP ${res.status}`);
   const items = JSON.parse(stripJsonGuard(await res.text())) as T[];
   return Array.isArray(items) ? items : [];
 }
