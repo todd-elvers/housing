@@ -61,7 +61,7 @@ const BEST_UNPOSTED = `
 // single run already means gone); partial/feed sources wait this out so a listing
 // that merely aged out of a "recent" feed isn't yanked prematurely. Tunable so a
 // noisier feed can be given more grace.
-const DEFAULT_STALE_DAYS = 4;
+const DEFAULT_STALE_DAYS = 2;
 function staleMs(): number {
   const d = Number(process.env.HOUSING_STALE_DAYS);
   return (Number.isFinite(d) && d > 0 ? d : DEFAULT_STALE_DAYS) * 86_400_000;
