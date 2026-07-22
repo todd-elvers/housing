@@ -2,9 +2,9 @@ import { Data, Duration, Effect, Schedule } from "effect";
 
 // Discord incoming-webhook notifier. One message PER eligible listing (not a
 // batched digest), so each can be edited in place later: a listing that changes
-// gets its card updated, and one that's delisted gets its message rewritten to a
-// greyed-out "delisted" state. The message id returned on post is stored by the
-// caller so those edits can target it.
+// gets its card updated, and one that's no longer available has its message
+// deleted outright. The message id returned on post is stored by the caller so
+// those edits/deletes can target it.
 //
 // Operations are Effects. Retries (429 honoring retry_after, plus 5xx) are handled
 // here; the caller trickles them through a RateLimiter to respect the per-webhook
@@ -15,7 +15,6 @@ const WEBHOOK_USERNAME = "SF Rent Radar";
 const COLOR = {
   new: 0x57f287, // green
   changed: 0xfaa61a, // amber
-  delisted: 0xed4245, // red
 } as const;
 
 const LIMIT = { title: 256, description: 4096 } as const;
@@ -28,7 +27,6 @@ interface Embed {
   url?: string;
   description?: string;
   color?: number;
-  timestamp?: string;
   image?: EmbedImage;
 }
 
@@ -40,13 +38,6 @@ export interface RenderedCard {
   description: string; // commute / change / source line
   png: Buffer | null; // null → embed posts without an image
   neighborhood: string | null; // routes the card to its forum thread
-}
-
-/** Minimal listing identity used to render a delisted (removed) message. */
-export interface DelistedInfo {
-  title: string;
-  url: string;
-  source: string;
 }
 
 function trunc(s: string, n: number): string {
@@ -87,22 +78,6 @@ function cardForm(card: RenderedCard, threadName?: string): FormData {
   return form;
 }
 
-/** Build the multipart body that rewrites a message to its delisted state. */
-function delistedForm(info: DelistedInfo): FormData {
-  const embed: Embed = {
-    title: trunc(`🔴 Delisted · ${info.title}`, LIMIT.title),
-    url: info.url,
-    // Embed titles don't render markdown; put the strikethrough in the description.
-    description: `~~${trunc(info.title, 400)}~~\nNo longer listed · via ${info.source}`,
-    color: COLOR.delisted,
-    timestamp: new Date().toISOString(),
-  };
-  const form = new FormData();
-  // attachments:[] drops the previously-uploaded map image on edit.
-  form.append("payload_json", JSON.stringify({ embeds: [embed], attachments: [] }));
-  return form;
-}
-
 /** A non-retryable Discord failure (bad payload, unknown message, etc.). */
 export class DiscordError extends Data.TaggedError("DiscordError")<{
   status: number;
@@ -125,11 +100,11 @@ interface MessageRef {
  */
 function attempt(
   url: string,
-  method: "POST" | "PATCH",
-  makeBody: () => FormData,
+  method: "POST" | "PATCH" | "DELETE",
+  makeBody?: () => FormData,
 ): Effect.Effect<MessageRef | null, DiscordError | Retry> {
   return Effect.gen(function* () {
-    const res = yield* Effect.promise(() => fetch(url, { method, body: makeBody() }));
+    const res = yield* Effect.promise(() => fetch(url, { method, body: makeBody?.() }));
     if (res.status === 429) {
       const body = (yield* Effect.promise(() => res.json().catch(() => ({})))) as {
         retry_after?: number;
@@ -153,8 +128,8 @@ function attempt(
 
 function request(
   url: string,
-  method: "POST" | "PATCH",
-  makeBody: () => FormData,
+  method: "POST" | "PATCH" | "DELETE",
+  makeBody?: () => FormData,
 ): Effect.Effect<MessageRef | null, DiscordError> {
   return attempt(url, method, makeBody).pipe(
     Effect.retry({ while: (e) => e._tag === "DiscordRetry", schedule: Schedule.recurs(4) }),
@@ -212,13 +187,16 @@ export function editCard(
   return request(url, "PATCH", () => cardForm(card)).pipe(Effect.asVoid);
 }
 
-/** Rewrite a previously-posted message to its delisted state. */
-export function markDelisted(
+/** Delete a previously-posted message (its listing is no longer available). */
+export function deleteCard(
   webhook: string,
   messageId: string,
   threadId: string | null,
-  info: DelistedInfo,
 ): Effect.Effect<void, DiscordError> {
   const url = `${base(webhook)}/messages/${messageId}?wait=true${threadQ(threadId)}`;
-  return request(url, "PATCH", () => delistedForm(info)).pipe(Effect.asVoid);
+  return request(url, "DELETE").pipe(
+    Effect.asVoid,
+    // A 404 means it's already gone — that's the desired end state, not a failure.
+    Effect.catchAll((e) => (e.status === 404 ? Effect.void : Effect.fail(e))),
+  );
 }

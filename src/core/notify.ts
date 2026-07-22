@@ -1,7 +1,7 @@
 import { Duration, Effect, RateLimiter } from "effect";
 import type { ListingEvent, SourceSyncSummary } from "./types.ts";
 import { log } from "./log.ts";
-import { editCard, markDelisted, postCard, type RenderedCard } from "./discord.ts";
+import { editCard, deleteCard, postCard, type RenderedCard } from "./discord.ts";
 // card.ts pulls in the native canvas binary; import it lazily (only when we
 // actually render cards) so a plain ingest without a webhook never loads it.
 import type { Anchor, CardInput, TileCache } from "./card.ts";
@@ -48,7 +48,7 @@ function bedBucket(beds: number | null): string {
  * Discord notifier. Prints a digest to stdout, then (when DISCORD_WEBHOOK is set)
  * keeps a live per-listing board in the channel: every eligible listing gets its
  * own message, posted on a trickle; a listing that changes has its card edited in
- * place; a listing that's delisted has its message rewritten to a greyed state.
+ * place; a listing that's no longer available has its message deleted.
  */
 export async function notify(summaries: SourceSyncSummary[], store: Store): Promise<void> {
   const events = summaries.flatMap((s) => s.events);
@@ -98,9 +98,9 @@ export async function syncDiscord(
 
 /**
  * Post eligible listings not yet on the board (trickled through a RateLimiter),
- * edit ones that changed, and mark delisted ones — all as individual,
- * in-place-editable messages. A failed write is logged and skipped, never
- * aborting the batch.
+ * edit ones that changed, and delete ones that are no longer available — all as
+ * individual messages. A failed write is logged and skipped, never aborting the
+ * batch.
  */
 function reconcileDiscord(
   webhook: string,
@@ -162,11 +162,16 @@ function reconcileDiscord(
         }),
       ),
       ...delists.map((row) =>
-        markDelisted(webhook, row.discord_message_id!, row.discord_thread_id, {
-          title: cardTitle(row),
-          url: row.url,
-          source: row.source,
-        }).pipe(Effect.tap(() => Effect.sync(() => void delisted++))),
+        deleteCard(webhook, row.discord_message_id!, row.discord_thread_id).pipe(
+          // Drop our tracking so the card won't be retried, and so a still-active
+          // sibling of the same unit becomes eligible to re-post in its place.
+          Effect.tap(() =>
+            Effect.sync(() => {
+              store.clearDiscordMessage(row.id);
+              delisted++;
+            }),
+          ),
+        ),
       ),
       ...posts.map((row) =>
         Effect.gen(function* () {
@@ -200,7 +205,7 @@ function reconcileDiscord(
 
     const remaining = store.countPendingPosts(maxMin);
     log.print(
-      `→ discord: ${posted} posted, ${edited} edited, ${delisted} delisted` +
+      `→ discord: ${posted} posted, ${edited} edited, ${delisted} deleted` +
         (remaining > 0 ? ` (${remaining} still queued)` : ""),
     );
     return { posted, edited, delisted, remaining };

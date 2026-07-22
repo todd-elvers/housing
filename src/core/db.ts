@@ -56,6 +56,17 @@ const BEST_UNPOSTED = `
          AND q.discord_message_id IS NOT NULL
     )`;
 
+// How long a listing may go unseen (across its source's runs) before it's swept
+// as "no longer available". Snapshot-complete sources ignore this (absence in a
+// single run already means gone); partial/feed sources wait this out so a listing
+// that merely aged out of a "recent" feed isn't yanked prematurely. Tunable so a
+// noisier feed can be given more grace.
+const DEFAULT_STALE_DAYS = 4;
+function staleMs(): number {
+  const d = Number(process.env.HOUSING_STALE_DAYS);
+  return (Number.isFinite(d) && d > 0 ? d : DEFAULT_STALE_DAYS) * 86_400_000;
+}
+
 export class Store {
   private db: DatabaseSync;
 
@@ -209,6 +220,15 @@ export class Store {
     this.db
       .prepare("UPDATE listings SET discord_message_id = ?, discord_thread_id = ? WHERE id = ?")
       .run(messageId, threadId, id);
+  }
+
+  /** Forget the Discord message for one listing (after its card is deleted). */
+  clearDiscordMessage(id: string): void {
+    this.db
+      .prepare(
+        "UPDATE listings SET discord_message_id = NULL, discord_thread_id = NULL WHERE id = ?",
+      )
+      .run(id);
   }
 
   /** The Discord thread id for a group, or null if none has been created yet. */
@@ -390,14 +410,19 @@ export class Store {
         });
       }
 
-      // Removal sweep: only when the fetch is a complete snapshot.
+      // Removal sweep: an active listing not seen recently enough is "gone". A
+      // complete-snapshot source removes anything it didn't return THIS run
+      // (absence ⇒ delisted). A partial/feed source instead waits until a listing
+      // hasn't shown up for HOUSING_STALE_DAYS — absence only means gone once it's
+      // been missing across several runs. Skipped while seeding (no baseline yet).
       let removedCount = 0;
-      if (snapshotComplete && !seedMode) {
+      if (!seedMode) {
+        const cutoff = snapshotComplete ? runTs : runTs - staleMs();
         const stale = this.db
           .prepare(
             "SELECT id, url, title, price, beds, baths, neighborhood FROM listings WHERE source = ? AND status = 'active' AND last_seen < ?",
           )
-          .all(source, runTs) as {
+          .all(source, cutoff) as {
           id: string;
           url: string;
           title: string | null;
