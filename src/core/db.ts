@@ -25,6 +25,16 @@ const RANK_CASE = sourceRankCase("p.source");
 // Rank active, eligible (within-commute) listings within each unit (same
 // address_norm — street + apartment; unaddressed rows are their own unit), best
 // source first. Bound param: max commute minutes.
+// Budget ceiling by size — a listing priced above what's worth seeing for its
+// bedroom count is dropped from the board (studio ≤ $5k, 1br ≤ $6k, 2br ≤ $8k,
+// 3br+ ≤ $12k). Rows with an unknown price or bed count are kept (can't judge).
+const PRICE_CAP = `CASE
+      WHEN p.beds IS NULL THEN 1e9
+      WHEN p.beds < 1 THEN 5000
+      WHEN p.beds < 2 THEN 6000
+      WHEN p.beds < 3 THEN 8000
+      ELSE 12000
+    END`;
 const RANKED_ELIGIBLE = `
   WITH ranked AS (
     SELECT p.*, ROW_NUMBER() OVER (
@@ -33,6 +43,7 @@ const RANKED_ELIGIBLE = `
     ) AS rn
     FROM listings p
     WHERE p.status = 'active' AND p.commute_min IS NOT NULL AND p.commute_min <= ?
+      AND (p.price IS NULL OR p.price <= ${PRICE_CAP})
   )`;
 // The best listing for each unit that isn't posted yet and whose unit has no card.
 const BEST_UNPOSTED = `
