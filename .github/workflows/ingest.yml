@@ -2,11 +2,17 @@ name: ingest
 
 on:
   schedule:
-    # Hourly 8am–8pm Pacific (PDT = UTC-7): 15:23–23:23 + 00:23–03:23 UTC.
-    # Offset to :23 to dodge the top-of-hour cron rush. NB: fixed to PDT — runs
+    # Hourly 8am–8pm Pacific (PDT = UTC-7): 15:xx–23:xx + 00:xx–03:xx UTC.
+    # Offset off the top-of-hour to dodge the cron rush. NB: fixed to PDT — runs
     # shift an hour later in local time when PST returns in November.
+    # Two ticks per hour on purpose: GitHub delivers `schedule` events
+    # best-effort and drops ~half of hourly ticks under load (observed Jul
+    # 2026: 6-7 of 13 fired/day), so :23 + :53 lands near-hourly in practice.
+    # The `ingest` concurrency group below serializes any that fire close together.
     - cron: "23 15-23 * * *"
     - cron: "23 0-3 * * *"
+    - cron: "53 15-23 * * *"
+    - cron: "53 0-3 * * *"
   workflow_dispatch:
 
 # One writer at a time — a mid-flight DB sync must never overlap with the next.
