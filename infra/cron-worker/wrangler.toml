@@ -1,0 +1,22 @@
+# Cloudflare Worker that replaces GitHub's flaky `schedule` trigger: CF cron
+# triggers fire on the clock (not best-effort), and each tick just asks GitHub
+# to `workflow_dispatch` the ingest workflow, which IS delivered immediately.
+#
+# Deploy:   cd infra/cron-worker && wrangler deploy
+# Secrets:  wrangler secret put GITHUB_TOKEN            (fine-grained PAT: this
+#             repo only, Actions: Read and write — see SETUP.md)
+#           wrangler secret put DISCORD_ERROR_WEBHOOK   (optional: alert if the
+#             dispatch itself fails)
+# Logs:     wrangler tail
+
+name = "housing-ingest-cron"
+main = "src/index.js"
+compatibility_date = "2026-07-01"
+
+[triggers]
+# Hourly 8:23am–8:23pm Pacific (PDT = UTC-7). Cloudflare crons are UTC; like
+# the old GHA schedule this is fixed to PDT and shifts an hour when PST returns.
+crons = ["23 0-3,15-23 * * *"]
+
+[observability]
+enabled = true
