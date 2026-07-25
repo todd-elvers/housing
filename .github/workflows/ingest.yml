@@ -2,7 +2,7 @@ name: ingest
 
 # No `schedule:` on purpose — GitHub delivers scheduled ticks best-effort and
 # dropped ~half of ours (observed Jul 2026: 6-7 of 13 fired/day). The hourly
-# 8:23am–8:23pm PT timing lives in a Cloudflare Worker cron instead
+# 8am–10pm PT timing lives in a Cloudflare Worker cron instead
 # (infra/cron-worker), which dispatches this workflow via the API — those are
 # delivered immediately and reliably.
 on:
