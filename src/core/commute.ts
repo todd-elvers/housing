@@ -6,11 +6,12 @@ import { log } from "./log.ts";
 
 // Two-tier commute enrichment for ingested listings:
 //
-//   Tier 1 — MATRIX (/v4/time-filter/fast, many_to_one): one cheap call gets the
-//   total transit time from every listing to the office. Up to 100k departures
-//   per search, so the whole DB fits in one request. Bucketed to a typical
-//   "weekday_morning" (the /fast model has no exact-timestamp option), which is
-//   plenty for the headline ~Nmin. Stored in listings.commute_min.
+//   Tier 1 — MATRIX (/v4/time-filter/fast, many_to_one): one cheap call PER TRAVEL
+//   MODE gets the total door-to-door time from every listing to the office. Up to
+//   100k departures per search, so the whole DB fits in one request per mode.
+//   Bucketed to a typical "weekday_morning" (the /fast model has no exact-timestamp
+//   option), which is plenty for a headline ~Nmin. Stored one column per mode — see
+//   MATRIX_MODES.
 //
 //   Tier 2 — ROUTES (/v4/routes): the per-leg walk/transit breakdown, but only
 //   for listings the matrix says are within LEG_GATE_MIN transit-minutes — no
@@ -44,12 +45,49 @@ const ROUTES_URL = "https://api.traveltimeapp.com/v4/routes";
 const MATRIX_CHUNK = 2000; // departure ids per matrix search (well under the 100k cap; keeps payloads sane)
 const ROUTES_BATCH = 10; // /v4/routes allows up to 10 searches per request
 const MATRIX_MAX_SECS = 10800; // /fast travel_time ceiling (3h)
+const WALK_MAX_SECS = 3600; // 1h ceiling for walking — see MATRIX_MODES
 const ROUTES_MAX_SECS = 7200; // 2h ceiling for the leg-detail search
 const RATE_PACE_MS = 11_000; // ~<60 searches/min for trial plans
 const MAX_RETRIES = 4;
 // Only fetch the expensive per-leg route for listings within this many transit
 // minutes (per the matrix). Override via env HOUSING_LEG_GATE_MIN.
 const DEFAULT_LEG_GATE_MIN = 30;
+
+interface MatrixMode {
+  /** Short name used in logs and in EnrichResult.matrix. */
+  label: string;
+  /** The listings column this mode's minutes land in. */
+  column: string;
+  /** TravelTime transportation.type for the search. */
+  type: string;
+  /**
+   * Journey-time ceiling. Not a filter: anything slower comes back `unreachable`
+   * and the column simply stays NULL, which downstream reads as "not an option".
+   */
+  maxSecs: number;
+}
+
+/**
+ * The travel modes we ask the matrix for — one cheap many_to_one search each, so
+ * adding a mode costs one extra search per MATRIX_CHUNK listings, not one per
+ * listing.
+ *
+ * Only transit earns a Tier-2 leg breakdown. Walking and driving are single-leg by
+ * definition, so the matrix total already IS the whole journey and a /v4/routes
+ * call would spend real money to tell us nothing new.
+ *
+ * Walking is capped an hour out rather than at the API's 3h maximum: a 90-minute
+ * walk is not a commute anyone is choosing, and storing one only tempts a reader
+ * (or a UI) into treating it as an option. Driving keeps the full ceiling — a long
+ * drive is still a genuine choice in a region this spread out.
+ */
+const MATRIX_MODES = [
+  { label: "transit", column: "commute_min", type: "public_transport", maxSecs: MATRIX_MAX_SECS },
+  { label: "walk", column: "walk_min", type: "walking", maxSecs: WALK_MAX_SECS },
+  { label: "drive", column: "drive_min", type: "driving", maxSecs: MATRIX_MAX_SECS },
+] as const satisfies readonly MatrixMode[];
+
+type ModeLabel = (typeof MATRIX_MODES)[number]["label"];
 
 interface RoutePart {
   type: string; // road | basic | public_transport | start_end
@@ -135,18 +173,26 @@ function postWithRetry<T>(
 }
 
 export interface EnrichResult {
-  timed: number; // listings that got a matrix travel time this run
-  unreachable: number; // listings the matrix couldn't reach within the ceiling
-  legs: number; // listings that got a per-leg route this run
+  /** Per travel mode: how many listings got a time, and how many were out of range. */
+  matrix: Record<ModeLabel, { timed: number; unreachable: number }>;
+  legs: number; // listings that got a per-leg transit route this run
   cleared: number; // rows wiped by force before recomputing
   reason?: string; // set when the run no-oped (missing creds/anchor)
 }
+
+const emptyResult = (): EnrichResult => ({
+  matrix: Object.fromEntries(
+    MATRIX_MODES.map((m) => [m.label, { timed: 0, unreachable: 0 }]),
+  ) as EnrichResult["matrix"],
+  legs: 0,
+  cleared: 0,
+});
 
 export async function enrichCommutes(
   dbPath: string,
   opts: { force?: boolean; legGateMin?: number } = {},
 ): Promise<EnrichResult> {
-  const base: EnrichResult = { timed: 0, unreachable: 0, legs: 0, cleared: 0 };
+  const base = emptyResult();
   const appId = process.env.TRAVELTIME_APPLICATION_ID;
   const apiKey = process.env.TRAVELTIME_API_KEY;
   const anchorStr = process.env.HOUSING_ANCHOR;
@@ -173,42 +219,55 @@ export async function enrichCommutes(
   await ensureColumns(db);
 
   // force = recompute from scratch (e.g. after the arrival time or anchor
-  // changed): wipe both tiers so everything is refetched.
+  // changed): wipe every mode and both tiers so everything is refetched.
   if (opts.force) {
+    const cols = [...MATRIX_MODES.map((m) => m.column), "commute_route"];
     const rs = await db.execute(
-      "UPDATE listings SET commute_min = NULL, commute_route = NULL WHERE commute_min IS NOT NULL OR commute_route IS NOT NULL",
+      `UPDATE listings SET ${cols.map((c) => `${c} = NULL`).join(", ")}
+        WHERE ${cols.map((c) => `${c} IS NOT NULL`).join(" OR ")}`,
     );
     base.cleared = rs.rowsAffected;
   }
 
-  await matrixPass(db, headers, office, base);
+  for (const mode of MATRIX_MODES) await matrixPass(db, headers, office, mode, base);
   await routesPass(db, headers, office, legGateMin, base);
 
   db.close();
+  const perMode = MATRIX_MODES.map((m) => {
+    const t = base.matrix[m.label];
+    return `${m.label} ${t.timed}${t.unreachable ? ` (+${t.unreachable} out of range)` : ""}`;
+  }).join(", ");
   log.info(
-    `Commute enrichment done — ${base.timed} timed, ${base.legs} with legs, ${base.unreachable} unreachable` +
+    `Commute enrichment done — ${perMode}; ${base.legs} with legs` +
       (base.cleared ? `, ${base.cleared} cleared` : "") +
       ".",
   );
   return base;
 }
 
-// --- Tier 1: matrix travel times for every un-timed listing ---
+// --- Tier 1: matrix travel times for every un-timed listing, one mode at a time ---
 
 async function matrixPass(
   db: Client,
   headers: Record<string, string>,
   office: { id: string; coords: { lat: number; lng: number } },
+  // The element type, not the widened MatrixMode: it keeps `label` a literal, so
+  // out.matrix[mode.label] type-checks without a cast.
+  mode: (typeof MATRIX_MODES)[number],
   out: EnrichResult,
 ): Promise<void> {
+  const tally = out.matrix[mode.label];
   const pending = rowsToObjects<{ id: string; lat: number; lon: number }>(
+    // mode.column is a literal from MATRIX_MODES, never caller input — no injection
+    // surface, and libSQL can't bind an identifier anyway.
     await db.execute(
-      "SELECT id, lat, lon FROM listings WHERE status = 'active' AND lat IS NOT NULL AND commute_min IS NULL",
+      `SELECT id, lat, lon FROM listings
+        WHERE status = 'active' AND lat IS NOT NULL AND ${mode.column} IS NULL`,
     ),
   );
   if (pending.length === 0) return;
 
-  log.info(`Matrix: computing transit time for ${pending.length} listing(s)…`);
+  log.info(`Matrix: computing ${mode.label} time for ${pending.length} listing(s)…`);
   const chunks = chunk(pending, MATRIX_CHUNK);
 
   for (let c = 0; c < chunks.length; c++) {
@@ -221,9 +280,11 @@ async function matrixPass(
             id: "commute",
             arrival_location_id: office.id,
             departure_location_ids: group.map((l) => l.id),
-            transportation: { type: "public_transport" },
+            transportation: { type: mode.type },
+            // Physically a no-op for walking, but the API requires it — and for
+            // driving it's the point: this is the rush-hour bucket, not free-flow.
             arrival_time_period: "weekday_morning",
-            travel_time: MATRIX_MAX_SECS,
+            travel_time: mode.maxSecs,
             properties: ["travel_time"],
           },
         ],
@@ -241,24 +302,25 @@ async function matrixPass(
       for (const result of data.results ?? []) {
         for (const loc of result.locations ?? []) {
           updates.push({
-            sql: "UPDATE listings SET commute_min = ? WHERE id = ?",
+            sql: `UPDATE listings SET ${mode.column} = ? WHERE id = ?`,
             args: [Math.round(loc.properties.travel_time / 60), loc.id],
           });
-          out.timed++;
+          tally.timed++;
         }
-        // Unreachable-within-ceiling listings stay commute_min = NULL; they're
-        // effectively "no reasonable commute" and simply won't show a time.
-        out.unreachable += result.unreachable?.length ?? 0;
+        // Unreachable-within-ceiling listings keep a NULL column; they're
+        // effectively "not an option by this mode" and simply won't show a time.
+        // Expected in bulk for walking, which is why the tally is per mode.
+        tally.unreachable += result.unreachable?.length ?? 0;
       }
       if (updates.length > 0) await db.batch(updates, "write");
     } catch (err) {
-      log.warn(`  matrix chunk ${c + 1}/${chunks.length} error: ${(err as Error).message}`);
+      log.warn(`  ${mode.label} chunk ${c + 1}/${chunks.length} error: ${(err as Error).message}`);
     }
     const remaining = chunks.length - (c + 1);
     if (chunks.length > 1) {
       log.info(
         progress(
-          "  matrix",
+          `  ${mode.label}`,
           Math.min((c + 1) * MATRIX_CHUNK, pending.length),
           pending.length,
           remaining,
@@ -421,7 +483,8 @@ export function formatLegs(legs: CommuteLeg[]): string {
 }
 
 async function ensureColumns(db: Client): Promise<void> {
-  for (const col of ["commute_min INTEGER", "commute_route TEXT"]) {
+  const cols = [...MATRIX_MODES.map((m) => `${m.column} INTEGER`), "commute_route TEXT"];
+  for (const col of cols) {
     try {
       await db.execute(`ALTER TABLE listings ADD COLUMN ${col}`);
     } catch {

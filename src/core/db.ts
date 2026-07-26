@@ -122,7 +122,9 @@ export class Store {
         posted_at     INTEGER,
         content_hash  TEXT NOT NULL,
         raw           TEXT,
-        commute_min   INTEGER,
+        commute_min   INTEGER,        -- minutes to HOUSING_ANCHOR by public transport
+        walk_min      INTEGER,        -- …on foot (NULL past the 1h ceiling)
+        drive_min     INTEGER,        -- …by car, at weekday-morning congestion
         commute_route TEXT,
         first_seen    INTEGER NOT NULL,
         last_seen     INTEGER NOT NULL
@@ -150,6 +152,8 @@ export class Store {
     // Backfill later-added columns on DBs created before they existed.
     for (const col of [
       "commute_min INTEGER",
+      "walk_min INTEGER",
+      "drive_min INTEGER",
       "commute_route TEXT",
       "discord_message_id TEXT", // set once we've posted this listing's card
       "discord_thread_id TEXT", // the neighborhood thread the card lives in
@@ -406,8 +410,10 @@ export class Store {
         beds=@beds, baths=@baths, sqft=@sqft, property_type=@property_type,
         status='active', posted_at=@posted_at, content_hash=@content_hash,
         raw=@raw, last_seen=@last_seen,
-        -- drop cached commute data when the coordinates move so it's recomputed
+        -- drop cached travel data when the coordinates move so it's recomputed
         commute_min=CASE WHEN lat IS NOT @lat OR lon IS NOT @lon THEN NULL ELSE commute_min END,
+        walk_min=CASE WHEN lat IS NOT @lat OR lon IS NOT @lon THEN NULL ELSE walk_min END,
+        drive_min=CASE WHEN lat IS NOT @lat OR lon IS NOT @lon THEN NULL ELSE drive_min END,
         commute_route=CASE WHEN lat IS NOT @lat OR lon IS NOT @lon THEN NULL ELSE commute_route END
     `,
         args: {
