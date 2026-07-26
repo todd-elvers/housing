@@ -6,8 +6,8 @@ Invoke a tool: `mise run housing -- <command> [flags]` (or `./housing <command>`
 Full machine-readable manifest: `housing introspect --json`.
 
 ## `housing commute`  _(mutation)_
-Recompute TravelTime commute routes for ingested listings (per-leg walk/transit breakdown), gated by distance.
-- **When:** Run after changing the office anchor or arrival time (with --force to wipe + recompute), or to backfill routes without a full ingest.
+Recompute TravelTime travel times to the office anchor — transit, walking and driving totals, plus a per-leg transit breakdown for close-in listings.
+- **When:** Run after changing the office anchor or arrival time (with --force to wipe + recompute), or to backfill travel times without a full ingest.
 - **Args:** --force*, --legGate
 - **Env:** HOUSING_DB, TURSO_AUTH_TOKEN, HOUSING_ANCHOR*, TRAVELTIME_APPLICATION_ID*, TRAVELTIME_API_KEY*
 

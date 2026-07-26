@@ -5,28 +5,28 @@ import { envSpec } from "../env/spec.ts";
 import { isRemoteDb } from "../core/client.ts";
 import { enrichCommutes } from "../core/commute.ts";
 
-// Recompute door-to-door commute routes for the ingested listings. Normally this
+// Recompute door-to-door travel times for the ingested listings. Normally this
 // runs automatically at the tail of `housing ingest` (filling only the listings
-// that lack a route). Use this command directly to force a full recompute — e.g.
+// that lack one). Use this command directly to force a full recompute — e.g.
 // after changing the arrival time or moving the office anchor, when every stored
-// route is now stale and must be refetched against the new parameters.
+// time is now stale and must be refetched against the new parameters.
 export default defineTool({
   summary:
-    "Recompute TravelTime commute routes for ingested listings (per-leg walk/transit breakdown), gated by distance.",
-  when: "Run after changing the office anchor or arrival time (with --force to wipe + recompute), or to backfill routes without a full ingest.",
+    "Recompute TravelTime travel times to the office anchor — transit, walking and driving totals, plus a per-leg transit breakdown for close-in listings.",
+  when: "Run after changing the office anchor or arrival time (with --force to wipe + recompute), or to backfill travel times without a full ingest.",
   kind: "mutation",
   input: z.object({
     force: z.coerce
       .boolean()
       .default(false)
       .describe(
-        "Wipe stored commute data first, then recompute (use after the anchor or arrival time changes)",
+        "Wipe stored travel data first, then recompute (use after the anchor or arrival time changes)",
       ),
     legGate: z.coerce
       .number()
       .optional()
       .describe(
-        "Transit-minute cutoff for fetching the per-leg route breakdown (default 30; all listings still get a matrix time)",
+        "Transit-minute cutoff for fetching the per-leg route breakdown (default 30; all listings still get matrix times for every mode)",
       ),
   }),
   requires: {
@@ -61,7 +61,7 @@ export default defineTool({
       throw new Error(`no database at ${env.HOUSING_DB} — run \`housing ingest\` first`);
     }
 
-    if (input.force) log.print("Forcing a full recompute — clearing existing commute data first…");
+    if (input.force) log.print("Forcing a full recompute — clearing existing travel data first…");
     const result = await enrichCommutes(env.HOUSING_DB, {
       force: input.force,
       legGateMin: input.legGate,
@@ -70,9 +70,14 @@ export default defineTool({
     if (result.reason) {
       throw new Error(`cannot enrich: ${result.reason}`);
     }
+    const modes = Object.entries(result.matrix)
+      .map(
+        ([label, t]) =>
+          `${label} ${t.timed}${t.unreachable ? ` (+${t.unreachable} out of range)` : ""}`,
+      )
+      .join(", ");
     log.print(
-      `\nCommute: ${result.timed} timed (matrix), ${result.legs} with leg breakdown` +
-        (result.unreachable ? `, ${result.unreachable} unreachable` : "") +
+      `\nTravel times: ${modes}; ${result.legs} with a transit leg breakdown` +
         (result.cleared ? `, ${result.cleared} cleared` : "") +
         ".",
     );
