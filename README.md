@@ -34,7 +34,7 @@ Everything is discoverable — you never need to read the source to know what ex
 
 Rental sources (under `housing search`):
 
-- **Tier 1 (free/direct)** — `craigslist`, `redfin`, `dahlia`, `zumper`, `rentsfnow`, `rentcast`, `reddit`, `homeharvest`. Run by a plain `ingest`. Five need no config; the rest need a free key.
+- **Tier 1 (free/direct)** — `craigslist`, `redfin`, `dahlia`, `zumper`, `rentsfnow`, `rentcom`, `rentcast`, `reddit`, `homeharvest`. Run by a plain `ingest`. Six need no config; the rest need a free key.
 - **Tier 2 (paid/managed anti-bot)** — `zillow` (RapidAPI), `apartments` (Apify Apartments.com). These cost money per call, so a plain `ingest` **skips** them; run with `ingest --paid` or `ingest --source zillow`.
 
 `housing sources` shows each source's tier + whether it's enabled.

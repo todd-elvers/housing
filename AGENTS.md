@@ -83,6 +83,13 @@ RentCast REST aggregator — a normalized snapshot with listedDate/status for cl
 - **Env:** RENTCAST_API_KEY*, RENTCAST_CITY, RENTCAST_STATE, RENTCAST_STATUS, RENTCAST_LIMIT
 - **Example:** `housing search rentcast`
 
+## `housing search rentcom`  _(query)_
+Rent.com (RentPath/Redfin) server-rendered search — free, keyless, and unusually rich: per-floor-plan beds/baths/sqft/rent, availability, amenities, photos, PM company, deals and ratings, with an opt-in detail pass for description, fees, pet policies, parking and walk/transit scores.
+- **When:** Use for broad SF multifamily + single-unit coverage without paying for Apartments.com — it crawls every property type and pages the full city set. Add --enrich for the deep per-property record (one extra request per listing).
+- **Args:** --state, --city, --propertyTypes, --minPrice, --maxPrice, --beds, --refine, --maxPages, --maxItems, --enrich, --enrichMax
+- **Env:** RENTCOM_STATE, RENTCOM_CITY, RENTCOM_PROPERTY_TYPES, RENTCOM_MAX_PAGES, RENTCOM_MAX_ITEMS, RENTCOM_ENRICH, RENTCOM_ENRICH_MAX
+- **Example:** `housing search rentcom`
+
 ## `housing search rentsfnow`  _(query)_
 RentSFNow / Veritas live availability feed — the largest single private SF/Oakland portfolio's currently-listed units with real rent, beds/baths, neighborhood and lat/lon.
 - **When:** Use for real available rentals (with prices) from a big private-landlord portfolio; snapshot-complete (absence ⇒ delisted). Filter with --city/--neighborhood/--min-max beds/baths/price.
