@@ -39,7 +39,17 @@ export async function ingestSources(
 
     // Per-leg commute enrichment for any listing that still lacks one. No-ops
     // without TravelTime credentials + HOUSING_ANCHOR; a failure is non-fatal.
+    //
+    // The no-op MUST be loud. enrichCommutes returns `reason` instead of throwing
+    // when its config is missing, and silently discarding that let a mis-configured
+    // CI ingest run for days looking perfectly green while every new listing landed
+    // with no travel times at all.
     yield* Effect.tryPromise(() => enrichCommutes(resolvedDbPath)).pipe(
+      Effect.tap((res) =>
+        Effect.sync(() => {
+          if (res.reason) log.warn(`commute enrichment skipped: ${res.reason}`);
+        }),
+      ),
       Effect.catchAll((err) =>
         Effect.sync(() => log.error(`commute enrichment failed: ${(err as Error).message}`)),
       ),
