@@ -11,6 +11,11 @@ import type { RawListing } from "../../core/types.ts";
 // available date. One GET, no auth, no JS, no bot wall (verified 2026-08-02).
 // Its sister building 100 Van Ness uses SightMap instead (see sightmap.ts).
 // The blob is the full current set, so snapshot-complete.
+//
+// Photos: the jd-fp unit data carries only an SVG floor-plan glyph (not a real
+// photo, and canvas can't decode SVG for the Discord card anyway), so
+// `raw.imageUrl` instead uses the page's own og:image — a real building photo
+// — shared across every unit here. card.ts's resolvePhotos() picks it up.
 const PAGE = "https://150vanness.com/floorplans/";
 
 const BUILDING = {
@@ -55,6 +60,7 @@ export default defineSource({
     );
     if (!m) throw new Error("vanness150: jd-fp data blob not found in floorplans page");
     const units = (JSON.parse(m[1]) as { units?: JdUnit[] }).units ?? [];
+    const imageUrl = html.match(/<meta property="og:image" content="([^"]+)"/)?.[1] ?? null;
     log.info(`vanness150: ${units.length} units`);
 
     return units.map((u): RawListing => {
@@ -97,6 +103,7 @@ export default defineSource({
           rentMax,
           availableDisplay: u.available_display,
           availableEpoch: num(u.available_date),
+          imageUrl,
         },
       };
     });

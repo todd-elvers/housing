@@ -18,6 +18,11 @@ import type { RawListing } from "../../core/types.ts";
 // cards, so each spec block is paired with the NEAREST label by byte offset —
 // verified to pair all 16 plans correctly (a plan with no current spec block,
 // e.g. B4, is simply skipped).
+//
+// Photos: no per-plan photo exists on these pages, and the residences pages
+// carry no og:image either — only the homepage does. `raw.imageUrl` is that
+// homepage building photo, shared across every plan. card.ts's
+// resolvePhotos() picks it up automatically.
 const BASE = "https://www.theoaksf.com";
 const PAGES = [
   "/studio-residences",
@@ -40,7 +45,7 @@ const LABEL_RE = />([ABCS]\d+)</g;
 
 const money = (s: string): number => Number(s.replace(/,/g, ""));
 
-function parsePage(html: string, pagePath: string): RawListing[] {
+function parsePage(html: string, pagePath: string, imageUrl: string | null): RawListing[] {
   const labels = [...html.matchAll(LABEL_RE)].map((m) => ({ off: m.index, label: m[1] }));
   const out: RawListing[] = [];
   for (const m of html.matchAll(SPEC_RE)) {
@@ -90,6 +95,7 @@ function parsePage(html: string, pagePath: string): RawListing[] {
         sqftMin,
         sqftMax,
         startingAt: true,
+        imageUrl,
       },
     });
   }
@@ -103,11 +109,14 @@ export default defineSource({
   when: "Use for The Oak's first-party floor-plan pricing (plan-level 'starting at', not unit-level); snapshot-complete across its four residences pages.",
   snapshotComplete: true,
   async fetch(_env, { log }): Promise<RawListing[]> {
+    const homeHtml = await fetchText(BASE, { timeoutMs: 25_000, retries: 2 }).catch(() => "");
+    const imageUrl = homeHtml.match(/<meta property="og:image" content="([^"]+)"/)?.[1] ?? null;
+
     const out: RawListing[] = [];
     const seen = new Set<string>();
     for (const p of PAGES) {
       const html = await fetchText(`${BASE}${p}`, { timeoutMs: 25_000, retries: 2 });
-      for (const l of parsePage(html, p)) {
+      for (const l of parsePage(html, p, imageUrl)) {
         if (seen.has(l.sourceId)) continue; // a plan card repeated across pages
         seen.add(l.sourceId);
         out.push(l);

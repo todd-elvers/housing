@@ -24,6 +24,12 @@ import type { RawListing } from "../../core/types.ts";
 // SightMap unit feed is currently empty (plan-level pricing comes from the
 // separate `theoak` source); it stays here so units flow the day Engrain's feed
 // is switched on.
+//
+// Photos: `raw.imageUrl` is a real per-unit photo when SightMap has one
+// (view_image_url), else the matched floor plan's diagram — both served from
+// cdn.sightmap.com, so this works even for The Ansel without ever touching its
+// Cloudflare-walled own site. card.ts's resolvePhotos() picks this key up
+// automatically.
 interface Building {
   /** Stable slug used in sourceId ("<slug>:<unit_number>"). */
   slug: string;
@@ -117,6 +123,8 @@ interface SmUnit {
   floor_id: string | null;
   floor_plan_id: string | null;
   specials_description?: string | null;
+  /** A real per-unit photo when SightMap has one (not every asset has these). */
+  view_image_url?: string | null;
 }
 
 interface SmPayload {
@@ -129,6 +137,8 @@ interface SmPayload {
       name: string | { name?: string } | null;
       bedroom_count: number | string | null;
       bathroom_count: number | string | null;
+      /** Floor-plan diagram — the fallback photo when a unit has no view_image_url. */
+      image_url?: string | null;
     }[];
     floors: { id: string; filter_label: string | null }[];
   };
@@ -181,6 +191,8 @@ async function fetchBuilding(b: Building): Promise<RawListing[]> {
     const baths = num(plan?.bathroom_count);
     // display_unit_number can carry a marketing prefix ("APT A-122").
     const unitNo = (u.display_unit_number || u.unit_number).replace(/^(APT|UNIT)\s+/i, "");
+    // Real per-unit photo when SightMap has one; otherwise the floor plan diagram.
+    const imageUrl = u.view_image_url || plan?.image_url || null;
     out.push({
       sourceId: `${b.slug}:${u.unit_number}`,
       url: `${b.pageUrl}#unit-${encodeURIComponent(u.unit_number)}`,
@@ -215,6 +227,7 @@ async function fetchBuilding(b: Building): Promise<RawListing[]> {
         floorPlan: planName,
         availableOn: u.available_on,
         specials: u.specials_description ?? null,
+        imageUrl,
       },
     });
   }

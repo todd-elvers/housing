@@ -13,6 +13,10 @@ import type { RawListing } from "../../core/types.ts";
 // front but passive), CDN-cached ~2min. The same JSON is also server-rendered
 // into the community page HTML (Fusion.contentCache) if this endpoint ever
 // moves. Absence from the feed ⇒ no longer listed, so snapshot-complete.
+//
+// Photos: `raw.imageUrl` is the unit's floor-plan diagram from
+// resource.avalonbay.com (no real per-unit interior photo in this feed).
+// card.ts's resolvePhotos() picks this key up automatically.
 interface Community {
   /** AvalonBay community id, e.g. "AVB-CA100" (AVA 55 Ninth). */
   id: string;
@@ -47,7 +51,8 @@ interface AvalonUnit {
   availableDateFurnished: string | null;
   url: string;
   address?: { addressLine1?: string; city?: string } | null;
-  floorPlan?: { name?: string | null } | null;
+  /** highResolution/lowResolution are paths relative to resource.avalonbay.com. */
+  floorPlan?: { name?: string | null; highResolution?: string | null } | null;
   startingAtPricesUnfurnished?: { prices?: { price?: number | null } | null } | null;
   startingAtPricesFurnished?: { prices?: { price?: number | null } | null } | null;
 }
@@ -55,6 +60,9 @@ interface AvalonUnit {
 const api = (communityId: string) =>
   "https://www.avaloncommunities.com/pf/api/v3/content/fetch/community-units?query=" +
   encodeURIComponent(JSON.stringify({ communityId }));
+
+// Floor-plan diagrams live on a separate asset host, not avaloncommunities.com.
+const IMAGE_BASE = "https://resource.avalonbay.com";
 
 export default defineSource({
   name: "avalon",
@@ -80,6 +88,9 @@ export default defineSource({
             u.startingAtPricesFurnished?.prices?.price ??
             null;
           const availableOn = u.availableDateUnfurnished ?? u.availableDateFurnished ?? null;
+          const imageUrl = u.floorPlan?.highResolution
+            ? `${IMAGE_BASE}${u.floorPlan.highResolution}`
+            : null;
           out.push({
             sourceId: u.unitId,
             url: u.url,
@@ -126,6 +137,7 @@ export default defineSource({
               furnishStatus: u.furnishStatus,
               availableOn,
               floorPlan: u.floorPlan?.name ?? null,
+              imageUrl,
             },
           });
         }
