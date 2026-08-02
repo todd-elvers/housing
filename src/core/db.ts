@@ -34,6 +34,9 @@ const PRICE_CAP = `CASE
       WHEN p.beds < 3 THEN 8000
       ELSE 12000
     END`;
+// Bathroom floor by bedroom count — a unit with fewer baths than bedrooms
+// (2BD/1BA) is disqualified from the board outright. As with the price cap,
+// rows with an unknown bed or bath count are kept (can't judge).
 const RANKED_ELIGIBLE = `
   WITH ranked AS (
     SELECT p.*, ROW_NUMBER() OVER (
@@ -43,6 +46,7 @@ const RANKED_ELIGIBLE = `
     FROM listings p
     WHERE p.status = 'active' AND p.commute_min IS NOT NULL AND p.commute_min <= ?
       AND (p.price IS NULL OR p.price <= ${PRICE_CAP})
+      AND (p.beds IS NULL OR p.baths IS NULL OR p.baths >= p.beds)
   )`;
 // The best listing for each unit that isn't posted yet and whose unit has no card.
 const BEST_UNPOSTED = `
