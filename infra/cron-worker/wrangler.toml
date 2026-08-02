@@ -14,10 +14,11 @@ main = "src/index.js"
 compatibility_date = "2026-07-01"
 
 [triggers]
-# On the hour, 8am–10pm Pacific (PDT = UTC-7): 15:00–23:00 + 00:00–05:00 UTC.
-# Cloudflare crons are UTC and fire reliably (no top-of-hour rush to dodge);
-# fixed to PDT, so runs shift an hour in local time when PST returns.
-crons = ["0 0-5,15-23 * * *"]
+# Every ten minutes, around the clock. The repo went public in Aug 2026, which
+# made Actions minutes free — before that, CI ran hourly 8am–10pm PT and a
+# laptop loop filled the gaps. Now CI is the primary ingest cadence and the
+# laptop loop covers only craigslist (which 403s datacenter IPs).
+crons = ["*/10 * * * *"]
 
 [observability]
 enabled = true
