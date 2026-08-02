@@ -56,8 +56,9 @@ Sanity check:
 `./housing <args>` == `mise run housing -- <args>`. `HOUSING_DB` picks the database:
 the team default (from `.env.age`) is the shared Turso DB (`libsql://…` +
 `TURSO_AUTH_TOKEN`); override to a local file in `.env.local` (e.g.
-`HOUSING_DB=data/dev.db`) for offline hacking. ⚠️ The shared DB has ONE writer —
-the hourly GitHub Actions ingest. Don't run `ingest` against it by hand unless
+`HOUSING_DB=data/dev.db`) for offline hacking. ⚠️ The shared DB's writers are the
+every-10-minutes GitHub Actions ingest plus the craigslist-only laptop loop
+(`scripts/ingest.sh`). Don't run `ingest` against it by hand unless
 you know the board state is yours to mutate; `find`/`search` are always safe.
 The first run per source **seeds** silently (no events); later runs report
 new/changed/removed. Every run writes a timestamped `./housing.log` (truncated each

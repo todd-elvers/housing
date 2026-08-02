@@ -3,10 +3,10 @@ SF Rental Data Ingress Catalog
 Generated 2026-06-29 via multi-agent workflow (7 discovery sweeps -> adversarial verification -> synthesis).
 130 raw sources discovered -> 130 unique -> 50 deep-verified (49 confirmed usable).
 Scope: data ingress routes only (how to AUTOMATE collection); criteria/price filtering deliberately deferred.
-Work address anchor: 539 Bryant St, San Francisco, CA 94107.
+Work address anchor: the HOUSING_ANCHOR env var (kept out of the public repo).
 -->
 
-# SF Rental Data Ingress Catalog — Scheduling-Ready Map (work address 539 Bryant St, 94107)
+# SF Rental Data Ingress Catalog — Scheduling-Ready Map (anchored on the HOUSING_ANCHOR work location)
 
 ## 1. Executive Summary — the realistic landscape
 
@@ -39,7 +39,7 @@ These are the v1 backbone. All confirmed live except where noted.
 ---
 
 **Craigslist sapi JSON API — SF Bay** · `internal-json-endpoint` · ✅ high
-- **Access:** `GET https://sapi.craigslist.org/web/v8/postings/search/full?batch=1-0-360-1-0&cc=US&lang=en&searchPath=apa&sort=date&postedToday=1` — add `&area=1&subarea=sfc` for SF-city, or `&lat=37.7825&lon=-122.3947&search_distance=2&postal=94107` for a radius around 539 Bryant. Detail body via `rapi.craigslist.org/web/v8/postings/{UUID}?lang=en` (per-item UUID, not numeric id). `items[]` are **compact positional arrays** decoded against inline `data.decode` tables — budget a small parser.
+- **Access:** `GET https://sapi.craigslist.org/web/v8/postings/search/full?batch=1-0-360-1-0&cc=US&lang=en&searchPath=apa&sort=date&postedToday=1` — add `&area=1&subarea=sfc` for SF-city, or `&lat=<anchor-lat>&lon=<anchor-lon>&search_distance=2&postal=<zip>` for a radius around the work anchor. Detail body via `rapi.craigslist.org/web/v8/postings/{UUID}?lang=en` (per-item UUID, not numeric id). `items[]` are **compact positional arrays** decoded against inline `data.decode` tables — budget a small parser.
 - **Auth:** none. **Cost:** free. **Rate limits:** per-IP; poll a given search every 2–5 min, ≤3–5 concurrent.
 - **Anti-bot:** IP reputation only — no JS/CAPTCHA on the JSON. **Datacenter IPs get instant 403; MUST run from a residential IP (home Synology).**
 - **Freshness:** real-time (`postedToday=1`, `sort=date`). **NEW/CHANGED:** stable posting id/UUID → diff per poll; best CL NEW signal. **Effort:** medium (parser + residential egress).
@@ -259,11 +259,11 @@ Exact handles to start from:
         STORE: SQLite (or JSON) on the Synology — listings table + per-source snapshot history
                                              ▼
         ENRICH + SCORE:
-          • feed address → existing sf-commute-map (ground-zeroed on 539 Bryant) for
+          • feed address → existing sf-commute-map (ground-zeroed on the work anchor) for
             transit travel-time scoring
           • optional rent-comp sanity check via RentCast AVM / Mashvisor
                                              ▼
-        NOTIFY: pushover CLI  →  "NEW 1BR $3.2k · 12 min to 539 Bryant · <url>"
+        NOTIFY: pushover CLI  →  "NEW 1BR $3.2k · 12 min to work · <url>"
 ```
 
 **Cadence & rate-limit notes:**
