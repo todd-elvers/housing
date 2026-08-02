@@ -14,9 +14,20 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 data/*.bak
+data/*.bak-shm
+data/*.bak-wal
+data/house-hunt-seen.json
 *.db
 *.db-shm
 *.db-wal
+
+# personal / never-publish — the repo is public, so anything personal that
+# lands in the working tree must be unstageable by a stray `git add .`
+.claude/
+*.jpeg
+*.jpg
+*.png
+*.heic
 
 # misc
 .DS_Store
