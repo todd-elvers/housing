@@ -51,14 +51,13 @@ jobs:
 
       # Free sources only (no --paid: metered APIs stay a deliberate, manual act).
       # craigslist is skipped — it 403s datacenter IPs like GitHub's runners.
+      #
+      # No Discord error reporting after this step any more: nobody watches the
+      # Discord surface now that the webapp exists, and at a 10-minute cadence a
+      # flaky source would post an alert every run. Failure visibility is the
+      # runs list itself (a hard failure reddens the workflow).
       - name: Ingest
         id: ingest
         run: |
           set -o pipefail
           mise exec -- aube exec tsx src/main.ts ingest --json --skip craigslist | tee ingest-result.json
-
-      - name: Report errors to Discord
-        if: always()
-        env:
-          INGEST_OUTCOME: ${{ steps.ingest.outcome }}
-        run: mise exec -- aube exec tsx scripts/ci-report.ts ingest-result.json
