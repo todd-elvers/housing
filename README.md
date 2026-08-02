@@ -44,6 +44,15 @@ No registry, no wiring; help, introspection, ingest, and tests pick it up automa
 
 ## Secrets, since this repo is public
 
-The only GitHub secret is `AGE_KEY`. Everything else ships committed-but-encrypted in
-`.env.age` ([age](https://age-encryption.org)) and is decrypted in memory at startup —
-never written to disk, never printed to CI logs.
+Secrets are managed with [age](https://age-encryption.org) keys: everything ships
+committed-but-encrypted in `.env.age`, decrypted in memory at startup by whoever holds a
+matching private key — never written to disk, never printed to CI logs. (The only actual
+GitHub secret is `AGE_KEY`, CI's copy of such a key.)
+
+**Not us? It still works.** You can't decrypt our `.env.age`, but you don't need to:
+`HOUSING_DB` defaults to a local SQLite file and several sources need no config at all,
+so clone → `mise run bootstrap` → `./housing ingest` just works. To go further, bring
+your own keys: `mise run secrets:keygen` mints your age identity, then
+`mise run secrets:set -- KEY` builds your own `.env.age` (or skip age entirely and use a
+plain gitignored `.env`). Per-source requirements: `./housing sources` — anything
+missing fails fast and tells you which var to set and where to get it.
