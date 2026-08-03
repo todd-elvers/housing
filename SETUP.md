@@ -39,7 +39,7 @@ Sanity check:
 
 ```sh
 ./housing --help      # command tree
-./housing sources     # 5 sources enabled, 3 need keys
+./housing sources     # every source + enabled/disabled (and which var a disabled one needs)
 ```
 
 ---
@@ -89,13 +89,13 @@ Edit `.env` (created by bootstrap; it's gitignored). Each block is independent;
 `./housing sources` tells you exactly which var is missing and where to get it.
 
 Tier-1 (free):
-- **rentcast** — `RENTCAST_API_KEY` from <https://app.rentcast.io> (free tier 50 req/mo).
 - **reddit** — `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` from a "script" app at <https://www.reddit.com/prefs/apps>.
 - **homeharvest** — set `HOUSING_HOMEHARVEST=1` (Python bridge; `uv sync` ran during bootstrap).
 
-Tier-2 (paid/managed anti-bot — **these cost money per call**, so a plain `ingest` skips them; run `ingest --paid` or `ingest --source <name>`):
+Tier-2 (paid/metered — **these cost money or quota per call**, so a plain `ingest` skips them; run `ingest --paid` or `ingest --source <name>`):
 - **zillow** — `RAPIDAPI_KEY` subscribed to the [zillow-property-data1](https://rapidapi.com/search/zillow-property-data1) RapidAPI API (async bulk scraper: `POST /v1/properties` → poll `/v1/results/{job_id}`). Deep per-property Zillow data (price, beds/baths, rent + sale zestimates, price/tax history, images) by `--search`/`--zipcodes`/`--zpids`/`--addresses`/`--urls`.
 - **apartments** — `APIFY_TOKEN` from <https://console.apify.com/account/integrations> (~$2/1k results). Apartments.com multifamily via the `pro100chok/apartments-scraper-usage` actor.
+- **rentcast** — `RENTCAST_API_KEY` from <https://app.rentcast.io>. Has a free tier (50 req/mo), but the quota is metered, so it's gated like the paid ones.
 
 `.env.example` lists every variable with a description and where to obtain it. It's
 generated — regenerate after adding a tool with `./housing introspect --format env-example > .env.example`.
@@ -111,16 +111,11 @@ mise run secrets:set -- DISCORD_WEBHOOK   # shared: encrypts into .env.age
 # or, local only:  echo 'DISCORD_WEBHOOK=https://discord.com/api/webhooks/…' >> .env.local
 ```
 
-When `DISCORD_WEBHOOK` is set, any `ingest` that produces changes posts a rich
-**sectioned digest** — a header embed plus color-coded 🟢 new / 🟡 changed / 🔴 removed
-sections (one row per listing, with a masked link, price, beds/baths, and neighborhood).
-Unset → stdout digest + `housing.log` only.
-
-> ⚠️ **No criteria filtering yet — expect noise.** Every genuinely-new listing counts
-> as an event, so a scheduled `ingest` (especially Craigslist's whole-Bay-Area feed)
-> posts often, with large counts. The digest caps each section at 10 rows with a
-> "+N more", but you'll still want price/beds/location filtering so only listings you
-> care about trigger a post before relying on it for real alerts.
+When `DISCORD_WEBHOOK` is set (a **forum-channel** webhook), `ingest` maintains a
+**live per-listing board**: one card per listing with map, photos, and price, filed
+into forum threads by neighborhood + bed count, edited in place as listings change.
+Unset → stdout digest + `housing.log` only. This surface is optional — the primary
+consumer of the DB is a separate map webapp.
 
 ### Sharing secrets with the team (age-encrypted)
 
@@ -235,12 +230,21 @@ offline tiers.
 
 ---
 
-## 8. Scheduling
+## 8. Scheduling (how production runs)
 
-The engine is one process; schedule `./housing ingest` however you like. Cadence
-(see `data-ingress-catalog.md`): Craigslist every 2–5 min **from a residential IP**
-(datacenter IPs are 403'd — run it on a home box); Redfin/DAHLIA/RentSFNow/Zumper
-hourly–daily; RentCast daily (mind the monthly quota).
+Two writers share the DB, split by where their traffic is welcome:
+
+- **CI (everything except craigslist):** a Cloudflare Worker cron
+  (`infra/cron-worker`) fires every 10 minutes around the clock and API-dispatches
+  `.github/workflows/ingest.yml` (`ingest --skip craigslist`). A Worker dispatching
+  via `workflow_dispatch` instead of GitHub's own `schedule:` trigger is deliberate —
+  GitHub delivers cron ticks best-effort and dropped ~half of ours. The repo is
+  public, so these runs cost no Actions minutes.
+- **Laptop (craigslist only):** `./scripts/ingest.sh` loops every 10 minutes from a
+  residential IP — craigslist 403s datacenter IPs. No coordination needed: diffing
+  and removal-marking are per-source, so the two writers touch disjoint rows.
+
+Running your own copy? Any scheduler works — the engine is one process:
 
 ```sh
 crontab -e
@@ -257,7 +261,9 @@ mise.toml / mise.lock   pinned tool versions (node/aube/python/uv) + tasks
 package.json            JS deps (citty, zod) + dev deps
 pyproject.toml          Python deps (homeharvest) for the uv bridge
 .env / .env.example     config + keys (.env gitignored; .env.example generated)
+.env.age                team secrets, age-encrypted and committed (see §5)
 AGENTS.md               generated agent-facing tool catalog
+infra/cron-worker/      Cloudflare Worker cron that dispatches the CI ingest (see §8)
 housing                 ./housing shim → mise exec -- aube exec tsx src/main.ts
 housing.log             latest run's log (gitignored, truncated per run)
 src/
@@ -271,6 +277,7 @@ src/
 test/tools.test.ts      self-discovering integration test (FREE sources; never bills a paid API)
 test/paid.test.ts       deliberate PAID-API suite (`mise run test:paid`; live Zillow + Apartments)
 scripts/homeharvest_fetch.py   Python bridge (uv)
+scripts/ingest.sh              craigslist-only residential loop (see §8)
 ```
 
 ---
