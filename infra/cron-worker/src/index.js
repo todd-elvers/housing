@@ -3,8 +3,8 @@
 // hourly ticks dropped); API-dispatched runs start immediately and reliably.
 // The workflow's `ingest` concurrency group serializes any overlap.
 
-const DISPATCH_URL =
-  "https://api.github.com/repos/todd-elvers/housing/actions/workflows/ingest.yml/dispatches";
+const API_BASE = "https://api.github.com/repos/todd-elvers/housing/actions/workflows/ingest.yml";
+const DISPATCH_URL = `${API_BASE}/dispatches`;
 
 export default {
   async scheduled(event, env, ctx) {
@@ -12,19 +12,47 @@ export default {
   },
 };
 
+function ghHeaders(env) {
+  return {
+    authorization: `Bearer ${env.GITHUB_TOKEN}`,
+    accept: "application/vnd.github+json",
+    "x-github-api-version": "2022-11-28",
+    "user-agent": "housing-ingest-cron (cloudflare-worker)",
+  };
+}
+
+// True when an ingest run is already queued or executing. GitHub's concurrency
+// queue holds only ONE pending run per group and CANCELS the older one when a
+// newer arrives — so dispatching while a run is waiting for a runner (as during
+// the Aug 6 2026 Actions outage, when pickup took 15+ min) manufactures
+// cancelled/failed runs out of thin air. Skipping the tick instead loses
+// nothing: each run ingests the full current state, and the next tick fires
+// 10 minutes later. Fails open (false) — if this check is down, GitHub is
+// probably down too, but the dispatch attempt is still the right default.
+async function hasActiveRun(env) {
+  const ACTIVE = new Set(["queued", "in_progress", "waiting", "pending", "requested"]);
+  try {
+    const res = await fetch(`${API_BASE}/runs?per_page=10`, { headers: ghHeaders(env) });
+    if (!res.ok) return false;
+    const body = await res.json();
+    return (body.workflow_runs ?? []).some((r) => ACTIVE.has(r.status));
+  } catch {
+    return false;
+  }
+}
+
 async function dispatch(env) {
+  if (await hasActiveRun(env)) {
+    console.log("skipped dispatch: an ingest run is already queued or in progress");
+    return;
+  }
   let lastError = "";
   // One retry on transient failure; GitHub returns 204 on success.
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(DISPATCH_URL, {
         method: "POST",
-        headers: {
-          authorization: `Bearer ${env.GITHUB_TOKEN}`,
-          accept: "application/vnd.github+json",
-          "x-github-api-version": "2022-11-28",
-          "user-agent": "housing-ingest-cron (cloudflare-worker)",
-        },
+        headers: ghHeaders(env),
         body: JSON.stringify({ ref: "main" }),
       });
       if (res.status === 204) {
