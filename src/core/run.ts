@@ -58,12 +58,16 @@ export async function ingestSources(
 
     // Tower watch: ping the phone if 100 Van Ness's 1BD/1BA floor-25+ inventory
     // changed since the last notified snapshot (state lives in watcher_state).
-    // Non-fatal — a pushover outage must not fail the ingest.
-    yield* Effect.tryPromise(() => runVanNessWatch(store)).pipe(
-      Effect.catchAll((err) =>
-        Effect.sync(() => log.error(`vanness watch failed: ${(err as Error).message}`)),
-      ),
-    );
+    // Gated on this run having synced sightmap — the laptop craigslist loop
+    // shares the same DB, and two watchers racing the same snapshot would
+    // double-ping. Non-fatal — a pushover outage must not fail the ingest.
+    if (summaries.some((s) => s.source === "sightmap" && !s.error)) {
+      yield* Effect.tryPromise(() => runVanNessWatch(store)).pipe(
+        Effect.catchAll((err) =>
+          Effect.sync(() => log.error(`vanness watch failed: ${(err as Error).message}`)),
+        ),
+      );
+    }
 
     // Reconcile the Discord board unless suppressed (e.g. a source-only refresh
     // that shouldn't trigger a board drain). Per-source progress still logs above.
