@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { Store } from "./db.ts";
 import { notify } from "./notify.ts";
+import { runVanNessWatch } from "./vanness-watch.ts";
 import { enrichCommutes } from "./commute.ts";
 import { apiLimitHint } from "./http.ts";
 import { log } from "./log.ts";
@@ -52,6 +53,15 @@ export async function ingestSources(
       ),
       Effect.catchAll((err) =>
         Effect.sync(() => log.error(`commute enrichment failed: ${(err as Error).message}`)),
+      ),
+    );
+
+    // Tower watch: ping the phone if 100 Van Ness's 1BD/1BA floor-25+ inventory
+    // changed since the last notified snapshot (state lives in watcher_state).
+    // Non-fatal — a pushover outage must not fail the ingest.
+    yield* Effect.tryPromise(() => runVanNessWatch(store)).pipe(
+      Effect.catchAll((err) =>
+        Effect.sync(() => log.error(`vanness watch failed: ${(err as Error).message}`)),
       ),
     );
 

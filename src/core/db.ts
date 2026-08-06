@@ -152,6 +152,15 @@ export class Store {
         group_key TEXT PRIMARY KEY,
         thread_id TEXT NOT NULL
       );
+
+      -- Durable per-watcher memory (e.g. the 100 Van Ness pushover watch's last
+      -- notified snapshot). Lives in the shared DB because CI runners are
+      -- stateless; value is watcher-defined JSON.
+      CREATE TABLE IF NOT EXISTS watcher_state (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
     `);
     // Backfill later-added columns on DBs created before they existed.
     for (const col of [
@@ -273,6 +282,46 @@ export class Store {
       sql: "INSERT INTO discord_threads (group_key, thread_id) VALUES (?,?) ON CONFLICT(group_key) DO UPDATE SET thread_id=?",
       args: [groupKey, threadId, threadId],
     });
+  }
+
+  /** A watcher's persisted memory (JSON string), or null if never saved. */
+  async getWatcherState(key: string): Promise<string | null> {
+    const rs = await this.db.execute({
+      sql: "SELECT value FROM watcher_state WHERE key = ?",
+      args: [key],
+    });
+    const v = rs.rows[0]?.["value"];
+    return typeof v === "string" ? v : null;
+  }
+
+  async setWatcherState(key: string, value: string): Promise<void> {
+    await this.db.execute({
+      sql: `INSERT INTO watcher_state (key, value, updated_at) VALUES (?,?,?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+      args: [key, value, Date.now()],
+    });
+  }
+
+  /** Active listings of one source, optionally narrowed to a source_id prefix. */
+  async activeListings(
+    source: string,
+    sourceIdPrefix?: string,
+  ): Promise<
+    {
+      source_id: string;
+      price: number | null;
+      beds: number | null;
+      baths: number | null;
+      raw: string | null;
+    }[]
+  > {
+    const rs = await this.db.execute({
+      sql: `SELECT source_id, price, beds, baths, raw FROM listings
+             WHERE source = ? AND status = 'active'
+               AND (? IS NULL OR source_id LIKE ? || '%')`,
+      args: [source, sourceIdPrefix ?? null, sourceIdPrefix ?? null],
+    });
+    return rowsToObjects(rs);
   }
 
   /**

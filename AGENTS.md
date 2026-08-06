@@ -21,7 +21,7 @@ Search the ingested rental DB by beds/baths/price/keyword, rank by distance, and
 Fetch enabled sources (free tier-1 by default; --paid adds tier-2), diff against the DB, and notify on new/changed/removed listings.
 - **When:** Run on a schedule (or by hand) to refresh the SF rental database and surface what changed. Plain runs stay free; add --paid (or --source <name>) to include tier-2 paid sources.
 - **Args:** --source, --paid, --skip, --noNotify*
-- **Env:** HOUSING_DB, TURSO_AUTH_TOKEN, DISCORD_WEBHOOK
+- **Env:** HOUSING_DB, TURSO_AUTH_TOKEN, DISCORD_WEBHOOK, PUSHOVER_TOKEN, PUSHOVER_USER
 
 ## `housing introspect`  _(query)_
 Emit the full command catalog (the machine-readable tool manifest for LLMs), or regenerate .env.example / AGENTS.md.
@@ -40,6 +40,11 @@ Apartments.com (CoStar) via Apify — the biggest unique SF multifamily inventor
 - **Args:** --url, --listingUrls, --maxItems, --maxPages, --concurrency
 - **Env:** APIFY_TOKEN*, APARTMENTS_SEARCH_URL, APARTMENTS_MAX_ITEMS, APARTMENTS_MAX_PAGES
 - **Example:** `housing search apartments`
+
+## `housing search avalon`  _(query)_
+AvalonBay first-party availability API — unit-level price, sqft, unit number and explicit floor number for registered communities (currently AVA 55 Ninth).
+- **When:** Use for first-party AVA 55 Ninth availability (the 17th-floor watch's authoritative feed — floorNumber is explicit); snapshot-complete (absence ⇒ delisted).
+- **Example:** `housing search avalon`
 
 ## `housing search craigslist`  _(query)_
 Craigslist SF Bay apartments/housing (sapi JSON) — the highest-volume, lowest-latency NEW-listing feed; free, no key.
@@ -96,6 +101,21 @@ RentSFNow / Veritas live availability feed — the largest single private SF/Oak
 - **Args:** --city, --neighborhood, --minBeds, --maxBeds, --minBaths, --maxBaths, --minPrice, --maxPrice, --maxPages, --limit
 - **Env:** RENTSFNOW_CITY, RENTSFNOW_MAX_PAGES
 - **Example:** `housing search rentsfnow`
+
+## `housing search sightmap`  _(query)_
+Engrain SightMap availability APIs on SF tower marketing sites (The Brady, 38 Dolores, 100 Van Ness, The Ansel, Chorus, The Oak) — unit-level rent, sqft, floor and available-on, straight from each building's own leasing feed.
+- **When:** Use for first-party unit-level availability at the registered Hub/Market-Octavia towers; snapshot-complete (absence ⇒ delisted). No filters — the full set is small.
+- **Example:** `housing search sightmap`
+
+## `housing search theoak`  _(query)_
+The Oak (55 Oak St) first-party plan-level pricing — 'starting at' rent, sqft range and beds/baths per floor plan scraped from its static Squarespace residences pages.
+- **When:** Use for The Oak's first-party floor-plan pricing (plan-level 'starting at', not unit-level); snapshot-complete across its four residences pages.
+- **Example:** `housing search theoak`
+
+## `housing search vanness150`  _(query)_
+150 Van Ness first-party availability — unit-level rent, sqft and available date parsed from the inline JSON its own floorplans page server-renders.
+- **When:** Use for first-party 150 Van Ness availability; snapshot-complete (absence ⇒ delisted). No filters — the set is small.
+- **Example:** `housing search vanness150`
 
 ## `housing search zillow`  _(query)_
 Zillow property data via the RapidAPI zillow-property-data1 async API — rich per-property detail (price, beds/baths, rent + sale zestimates, price/tax history, images) by search, zipcode, zpid, address, or URL.

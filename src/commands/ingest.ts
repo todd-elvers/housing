@@ -45,6 +45,16 @@ export default defineTool({
       "Discord webhook URL (optional; posts a digest to the shared channel on new/changed/removed)",
       "https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks",
     ),
+    PUSHOVER_TOKEN: envSpec(
+      z.string().optional(),
+      "Pushover app token (optional; phone pings from the 100 Van Ness tower watch)",
+      "https://pushover.net/api",
+    ),
+    PUSHOVER_USER: envSpec(
+      z.string().optional(),
+      "Pushover user key (optional; pairs with PUSHOVER_TOKEN)",
+      "https://pushover.net/api",
+    ),
   },
   async run({ input, env }) {
     let sources = await loadSources();
