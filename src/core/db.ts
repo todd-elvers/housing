@@ -393,6 +393,7 @@ export class Store {
     const events: ListingEvent[] = [];
     const stmts: InStatement[] = [];
     const seen = new Set<string>();
+    const refreshIds: string[] = [];
     let newCount = 0;
     let changedCount = 0;
     let seeded = 0;
@@ -447,6 +448,17 @@ export class Store {
         };
         events.push(ev);
         stmts.push(insertEvent(id, "changed", detail));
+      } else {
+        // Unchanged active row: no write. Rewriting every row every run just to
+        // bump last_seen burned through Turso's monthly row-write quota (the hash
+        // is this app's own definition of "changed", so nothing else can differ
+        // that we'd surface). A snapshot-complete source's sweep protects
+        // current-run rows via `seen`, so last_seen can go fully stale; a
+        // partial/feed source's sweep compares last_seen against the stale
+        // window, so refresh it — but only once it's a quarter of the way there,
+        // shrinking the nominal grace period by at most 25%.
+        if (!snapshotComplete && runTs - old.last_seen > staleMs() / 4) refreshIds.push(id);
+        continue;
       }
 
       stmts.push({
@@ -523,6 +535,15 @@ export class Store {
         });
         removedCount++;
       }
+    }
+
+    // Stale-window bookkeeping for unchanged rows of partial sources, batched as
+    // one IN-list statement per chunk rather than a per-row upsert.
+    for (const group of chunkArray(refreshIds, BATCH_CHUNK)) {
+      stmts.push({
+        sql: `UPDATE listings SET last_seen = ? WHERE id IN (${group.map(() => "?").join(",")})`,
+        args: [runTs, ...group],
+      });
     }
 
     for (const chunk of chunkArray(stmts, BATCH_CHUNK)) await this.db.batch(chunk, "write");
