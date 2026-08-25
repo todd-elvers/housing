@@ -54,10 +54,19 @@ jobs:
       #
       # No Discord error reporting after this step any more: nobody watches the
       # Discord surface now that the webapp exists, and at a 10-minute cadence a
-      # flaky source would post an alert every run. Failure visibility is the
-      # runs list itself (a hard failure reddens the workflow).
+      # flaky source would post an alert every run. Source- and DB-level failures
+      # (a flaky scrape, Turso's write quota) don't redden the run either — every
+      # source still scrapes, the errors come back in the result JSON, and the
+      # step below surfaces them as warning annotations. Only a hard crash
+      # (nothing scraped at all) fails the workflow.
       - name: Ingest
         id: ingest
         run: |
           set -o pipefail
           mise exec -- aube exec tsx src/main.ts ingest --json --skip craigslist | tee ingest-result.json
+
+      - name: Surface source errors as warnings
+        if: always()
+        run: |
+          [ -s ingest-result.json ] || exit 0
+          jq -r '.errors[]? | "::warning title=ingest source failed::\(.source): \(.error | gsub("\\s+"; " "))"' ingest-result.json

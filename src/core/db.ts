@@ -1,6 +1,7 @@
 import type { Client, InStatement } from "@libsql/client";
 import { openDb, rowsToObjects, chunkArray } from "./client.ts";
 import { contentHash, normalizeAddress } from "./normalize.ts";
+import { log } from "./log.ts";
 import type { ListingEvent, RawListing, SourceSyncSummary } from "./types.ts";
 
 // Source preference for choosing the ONE listing to post per unit — richer /
@@ -77,6 +78,14 @@ function staleMs(): number {
 const BATCH_CHUNK = 200;
 
 export class Store {
+  /**
+   * True when the startup migration failed (e.g. Turso's monthly write quota) —
+   * writes are known broken this run. Read-only work (fetching, diffing, the
+   * digest) still proceeds; write-only stages check this to avoid re-spending
+   * API calls on results that can't land.
+   */
+  writesBroken = false;
+
   private constructor(private db: Client) {}
 
   /**
@@ -88,7 +97,17 @@ export class Store {
     const store = new Store(client);
     // WAL only applies to a local file; PRAGMAs are unreliable over remote sqld.
     if (!isRemote) await client.execute("PRAGMA journal_mode = WAL");
-    await store.migrate();
+    // A DB that rejects writes at startup (e.g. Turso's monthly quota blocks
+    // even the no-op CREATE TABLE IF NOT EXISTS) must not kill the run before a
+    // single source has fetched. The schema already exists on any real DB and
+    // reads still work, so degrade to a warning; each source's own sync failure
+    // is captured as an error summary downstream.
+    try {
+      await store.migrate();
+    } catch (err) {
+      store.writesBroken = true;
+      log.warn(`⚠ migration failed (continuing read-only): ${(err as Error).message}`);
+    }
     return store;
   }
 

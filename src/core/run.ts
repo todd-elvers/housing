@@ -38,6 +38,16 @@ export async function ingestSources(
       concurrency: 1,
     });
 
+    // Everything below only exists to write (commute columns, watcher state,
+    // Discord message ids). When the DB is rejecting writes (e.g. Turso's
+    // monthly quota) running it anyway would re-spend the same TravelTime calls
+    // and re-post the same Discord cards every run, with nothing able to land —
+    // so stop at the scrape summaries, whose per-source errors say what broke.
+    if (store.writesBroken) {
+      log.warn("⚠ DB writes unavailable — skipped commute enrichment, watches, and board sync");
+      return summaries;
+    }
+
     // Per-leg commute enrichment for any listing that still lacks one. No-ops
     // without TravelTime credentials + HOUSING_ANCHOR; a failure is non-fatal.
     //
