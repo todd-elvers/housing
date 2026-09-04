@@ -1,7 +1,6 @@
 import { Effect } from "effect";
 import { Store } from "./db.ts";
 import { notify } from "./notify.ts";
-import { runVanNessWatch } from "./vanness-watch.ts";
 import { enrichCommutes } from "./commute.ts";
 import { apiLimitHint } from "./http.ts";
 import { log } from "./log.ts";
@@ -38,13 +37,13 @@ export async function ingestSources(
       concurrency: 1,
     });
 
-    // Everything below only exists to write (commute columns, watcher state,
-    // Discord message ids). When the DB is rejecting writes (e.g. Turso's
-    // monthly quota) running it anyway would re-spend the same TravelTime calls
-    // and re-post the same Discord cards every run, with nothing able to land —
-    // so stop at the scrape summaries, whose per-source errors say what broke.
+    // Everything below only exists to write (commute columns, Discord message
+    // ids). When the DB is rejecting writes (e.g. Turso's monthly quota)
+    // running it anyway would re-spend the same TravelTime calls and re-post
+    // the same Discord cards every run, with nothing able to land — so stop at
+    // the scrape summaries, whose per-source errors say what broke.
     if (store.writesBroken) {
-      log.warn("⚠ DB writes unavailable — skipped commute enrichment, watches, and board sync");
+      log.warn("⚠ DB writes unavailable — skipped commute enrichment and board sync");
       return summaries;
     }
 
@@ -65,19 +64,6 @@ export async function ingestSources(
         Effect.sync(() => log.error(`commute enrichment failed: ${(err as Error).message}`)),
       ),
     );
-
-    // Tower watch: ping the phone if 100 Van Ness's 1BD/1BA floor-25+ inventory
-    // changed since the last notified snapshot (state lives in watcher_state).
-    // Gated on this run having synced sightmap — the laptop craigslist loop
-    // shares the same DB, and two watchers racing the same snapshot would
-    // double-ping. Non-fatal — a pushover outage must not fail the ingest.
-    if (summaries.some((s) => s.source === "sightmap" && !s.error)) {
-      yield* Effect.tryPromise(() => runVanNessWatch(store)).pipe(
-        Effect.catchAll((err) =>
-          Effect.sync(() => log.error(`vanness watch failed: ${(err as Error).message}`)),
-        ),
-      );
-    }
 
     // Reconcile the Discord board unless suppressed (e.g. a source-only refresh
     // that shouldn't trigger a board drain). Per-source progress still logs above.
